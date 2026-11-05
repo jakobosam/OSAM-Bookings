@@ -1,0 +1,75 @@
+# Forced, irreversible rollback.
+# GitHub -> Actions -> "Rollback" -> Run workflow, fill in the boxes, then approve the run.
+#
+# Sites on a withdrawn version are moved back to the target version within about an
+# hour, whether or not automatic updates are on. Withdrawn versions can never be
+# offered or installed again. To ship a fix, release a new, higher version.
+
+name: Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Roll back TO this version (must already be released), e.g. 2.15.0'
+        required: true
+      block_versions:
+        description: 'Versions to withdraw, comma-separated. Leave blank = every release newer than the target'
+        required: false
+      sites:
+        description: 'Which sites: * for all, or domains comma-separated (e.g. client.co.uk, other.com)'
+        required: true
+        default: '*'
+      reason:
+        description: 'Reason (kept in the record)'
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  PLUGIN_SLUG: osam-bookings
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: release-signing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Work out which versions to withdraw
+        id: block
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ inputs.target_version }}
+          BLOCK: ${{ inputs.block_versions }}
+        run: |
+          TARGET="${TARGET#v}"
+          if [ -z "$BLOCK" ]; then
+            BLOCK=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | sed 's/^v//' | \
+              while read -r v; do php -r "exit(version_compare('$v','$TARGET','>')?0:1);" && echo "$v"; done | paste -sd, -)
+          fi
+          if [ -z "$BLOCK" ]; then echo "::error::No releases newer than $TARGET, so there's nothing to withdraw."; exit 1; fi
+          echo "Rolling back to $TARGET, withdrawing: $BLOCK"
+          echo "block=$BLOCK" >> "$GITHUB_OUTPUT"
+
+      - name: Sign and send to the update server
+        env:
+          OSAM_SIGNING_KEY: ${{ secrets.OSAM_SIGNING_KEY }}
+          ADMIN_TOKEN: ${{ secrets.UPDATE_SERVER_ADMIN_TOKEN }}
+          SERVER: ${{ vars.UPDATE_SERVER_URL }}
+          RB_SLUG: ${{ env.PLUGIN_SLUG }}
+          RB_TARGET: ${{ inputs.target_version }}
+          RB_BLOCK: ${{ steps.block.outputs.block }}
+          RB_SITES: ${{ inputs.sites }}
+          RB_REASON: ${{ inputs.reason }}
+        run: |
+          node .github/scripts/osam-sign.mjs rollback > instruction.json
+          CODE=$(curl -sS -o response.json -w '%{http_code}' -X POST "${SERVER%/}/v1/rollbacks" \
+            -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' --data @instruction.json)
+          cat response.json; echo
+          if [ "$CODE" != "201" ] && [ "$CODE" != "200" ]; then echo "::error::Update server answered HTTP $CODE"; exit 1; fi
