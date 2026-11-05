@@ -262,7 +262,7 @@ class OSB_Admin_Settings {
 					<p class="description"><?php esc_html_e( 'Optional. Sent with each check to help billing find the right service.', 'osam-bookings' ); ?></p>
 				</td></tr>
 				<tr><th scope="row"><label for="osb_lu"><?php esc_html_e( 'Status address', 'osam-bookings' ); ?></label></th><td>
-					<?php if ( $locked && defined( 'OSB_LICENCE_URL' ) ) : ?><code><?php echo esc_html( OSB_Licence::url() ); ?></code><?php else : ?><input type="url" id="osb_lu" name="licence_url" class="large-text" value="<?php echo esc_attr( $s['licence_url'] ); ?>" placeholder="<?php echo esc_attr( OSB_Updater::server() . '/wp-json/osam-connect/v1/licence' ); ?>"><?php endif; ?>
+					<?php if ( $locked && defined( 'OSB_LICENCE_URL' ) ) : ?><code><?php echo esc_html( OSB_Licence::url() ); ?></code><?php else : ?><input type="url" id="osb_lu" name="licence_url" class="large-text" value="<?php echo esc_attr( $s['licence_url'] ); ?>" placeholder="<?php echo esc_attr( OSB_Updater::connector() . '/wp-json/osam-connect/v1/licence' ); ?>"><?php endif; ?>
 					<p class="description"><?php esc_html_e( 'Where this site asks for its status, hourly (every 10 minutes while overdue or suspended). Leave empty to use the OSAM Connector.', 'osam-bookings' ); ?></p>
 				</td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Webhook for billing', 'osam-bookings' ); ?></th><td>

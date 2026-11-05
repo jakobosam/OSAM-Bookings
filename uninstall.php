@@ -22,6 +22,7 @@ foreach ( array( 'osb_settings', 'osb_db_version', 'osb_availability_version', '
 wp_clear_scheduled_hook( 'osb_cron' );
 wp_clear_scheduled_hook( 'osb_calendar_sync' );
 delete_site_transient( 'osb_update_info' );
+delete_option( 'osb_update_blocked' );
 $wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '\_transient\_osb\_%' OR option_name LIKE '\_transient\_timeout\_osb\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 
 $osb_role = get_role( 'administrator' );

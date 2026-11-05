@@ -1,12 +1,18 @@
 <?php
 /**
- * Private updates from the OSAM Connector.
+ * Private, signed updates from the OSAM update server.
  *
- * Asks the connector (connect.osamweb.com by default) for the latest release and feeds it into
+ * Asks the update server (updates.osamweb.com by default) for the latest release and feeds it into
  * WordPress's normal plugin update system, so it shows under Dashboard → Updates, can be updated
  * with one click, and works with WordPress auto-updates.
  *
+ * Every release zip is signed in GitHub Actions with OSAM's private Ed25519 key. This plugin holds
+ * the matching public key and refuses to install any zip whose signature doesn't check out, so a
+ * hacked update server can't push code to client sites. Rollbacks (installing an older version)
+ * need a signed rollback instruction too, and only apply to sites on a version it withdraws.
+ *
  * Turn off with define( 'OSB_UPDATES', false ); in wp-config.php.
+ * Point elsewhere with define( 'OSB_UPDATE_SERVER', 'https://…' ); (for testing).
  *
  * @package OSAM_Bookings
  */
@@ -20,6 +26,22 @@ class OSB_Updater {
 
 	const SLUG  = 'osam-bookings';
 	const CACHE = 'osb_update_info';
+
+	/**
+	 * Default update server.
+	 */
+	const DEFAULT_SERVER = 'https://updates.osamweb.com';
+
+	/**
+	 * OSAM release signing public key (base64 Ed25519). Safe to publish.
+	 * Must match the private key in GitHub → Settings → Environments → release-signing.
+	 */
+	const PUBLIC_KEY = '__OSAM_PUBLIC_KEY__';
+
+	/**
+	 * Versions withdrawn by signed rollbacks (never installed again on this site).
+	 */
+	const BLOCKED = 'osb_update_blocked';
 
 	/**
 	 * One-off event that runs a forced update straight away.
@@ -51,6 +73,7 @@ class OSB_Updater {
 		add_filter( 'plugins_api', array( __CLASS__, 'details' ), 20, 3 );
 		add_filter( 'auto_update_plugin', array( __CLASS__, 'auto' ), 20, 2 );
 		add_action( 'upgrader_process_complete', array( __CLASS__, 'flush' ), 10, 2 );
+		add_filter( 'upgrader_pre_download', array( __CLASS__, 'pre_download' ), 5, 4 );
 		add_action( 'admin_post_osb_check_updates', array( __CLASS__, 'check_now' ) );
 		add_action( 'osb_cron', array( __CLASS__, 'enforce' ), 99 );
 		add_action( self::FORCE_HOOK, array( __CLASS__, 'enforce' ) );
@@ -66,16 +89,165 @@ class OSB_Updater {
 	}
 
 	/**
-	 * Connector address — the same one calendar sign-in uses.
+	 * Update server address.
 	 *
 	 * @return string
 	 */
 	public static function server() {
+		$url = defined( 'OSB_UPDATE_SERVER' ) && OSB_UPDATE_SERVER ? (string) OSB_UPDATE_SERVER : self::DEFAULT_SERVER;
+		return untrailingslashit( esc_url_raw( (string) apply_filters( 'osb_update_server', $url ) ) );
+	}
+
+	/**
+	 * Connector address (connect.osamweb.com) — calendar sign-in and the subscription check.
+	 *
+	 * @return string
+	 */
+	public static function connector() {
 		$url = trim( (string) OSB_Settings::get( 'cal_connector_url' ) );
 		if ( '' === $url ) {
 			$url = defined( 'OSB_CONNECTOR_URL' ) ? (string) OSB_CONNECTOR_URL : OSB_Calendar_Sync::DEFAULT_CONNECTOR;
 		}
-		return untrailingslashit( esc_url_raw( (string) apply_filters( 'osb_update_server', $url ) ) );
+		return untrailingslashit( esc_url_raw( $url ) );
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Signatures
+	 * ------------------------------------------------------------------ */
+
+	/**
+	 * The public key bytes, or '' when the plugin wasn't built with one.
+	 *
+	 * @return string
+	 */
+	private static function public_key() {
+		$raw = base64_decode( self::PUBLIC_KEY, true ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+		return ( is_string( $raw ) && 32 === strlen( $raw ) ) ? $raw : '';
+	}
+
+	/**
+	 * Check an Ed25519 signature.
+	 *
+	 * @param string $message   Signed text.
+	 * @param string $signature Base64 signature.
+	 * @return bool
+	 */
+	public static function verify( $message, $signature ) {
+		$key = self::public_key();
+		$sig = base64_decode( (string) $signature, true ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+		if ( '' === $key || ! is_string( $sig ) || 64 !== strlen( $sig ) ) {
+			return false;
+		}
+		if ( ! function_exists( 'sodium_crypto_sign_verify_detached' ) && file_exists( ABSPATH . WPINC . '/sodium_compat/autoload.php' ) ) {
+			require_once ABSPATH . WPINC . '/sodium_compat/autoload.php';
+		}
+		try {
+			return function_exists( 'sodium_crypto_sign_verify_detached' ) && sodium_crypto_sign_verify_detached( $sig, (string) $message, $key );
+		} catch ( Exception $e ) {
+			return false;
+		} catch ( Error $e ) { // phpcs:ignore PHPCompatibility.Classes.NewClasses.errorFound
+			return false;
+		}
+	}
+
+	/**
+	 * Is this release (version + zip hash) signed by OSAM?
+	 *
+	 * @param string $version   Version.
+	 * @param string $sha256    Hex SHA-256 of the zip.
+	 * @param string $signature Base64 signature.
+	 * @return bool
+	 */
+	public static function release_signed( $version, $sha256, $signature ) {
+		return (bool) preg_match( '/^[0-9a-f]{64}$/', (string) $sha256 ) && self::verify( "OSAMSIG1\n" . self::SLUG . "\n" . $version . "\n" . $sha256, $signature );
+	}
+
+	/**
+	 * Read a signed rollback instruction that applies to this site and its installed version.
+	 *
+	 * @param mixed  $instruction [ payload => base64 JSON, signature => base64 ].
+	 * @param string $target      Version the server says to move to.
+	 * @return array|null The payload, or null if it isn't valid for this site right now.
+	 */
+	public static function rollback_payload( $instruction, $target ) {
+		if ( ! is_array( $instruction ) || empty( $instruction['payload'] ) || empty( $instruction['signature'] ) ) {
+			return null;
+		}
+		$b64 = (string) $instruction['payload'];
+		if ( ! self::verify( "OSAMROLL1\n" . $b64, (string) $instruction['signature'] ) ) {
+			return null;
+		}
+		$p = json_decode( (string) base64_decode( $b64, true ), true ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_decode
+		if ( ! is_array( $p ) || 'rollback' !== ( $p['type'] ?? '' ) || self::SLUG !== ( $p['slug'] ?? '' ) ) {
+			return null;
+		}
+		$host  = preg_replace( '/^www\./', '', strtolower( (string) wp_parse_url( home_url( '/' ), PHP_URL_HOST ) ) );
+		$sites = array_map( 'strval', (array) ( $p['sites'] ?? array() ) );
+		$block = array_map( 'strval', (array) ( $p['block_versions'] ?? array() ) );
+		if ( ! in_array( '*', $sites, true ) && ! in_array( $host, $sites, true ) ) {
+			return null;
+		}
+		if ( (int) ( $p['expires_at'] ?? 0 ) < time() ) {
+			return null;
+		}
+		// Only a site running a withdrawn version is moved, and only to the signed target.
+		if ( ! in_array( OSB_VERSION, $block, true ) || (string) ( $p['target_version'] ?? '' ) !== (string) $target ) {
+			return null;
+		}
+		$p['block_versions'] = $block;
+		return $p;
+	}
+
+	/**
+	 * Versions this site must never install (from signed rollbacks it has seen).
+	 *
+	 * @return string[]
+	 */
+	public static function blocked() {
+		$b = get_option( self::BLOCKED, array() );
+		return is_array( $b ) ? array_values( array_map( 'strval', $b ) ) : array();
+	}
+
+	/**
+	 * Check what the server sent before trusting any of it.
+	 *
+	 * @param array $out  Parsed info.
+	 * @param array $body Raw response.
+	 * @return array Info, or [ 'error' => … ].
+	 */
+	private static function vet( array $out, array $body ) {
+		if ( '' === self::public_key() ) {
+			return array( 'error' => __( 'This copy of OSAM Bookings has no update signing key, so updates are switched off. Install a release built by OSAM.', 'osam-bookings' ) );
+		}
+		$out['sha256']    = strtolower( (string) ( $body['sha256'] ?? '' ) );
+		$out['signature'] = (string) ( $body['signature'] ?? '' );
+		if ( ! self::release_signed( $out['version'], $out['sha256'], $out['signature'] ) ) {
+			/* translators: %s version */
+			return array( 'error' => sprintf( __( 'The update server offered version %s without a valid OSAM signature, so it was ignored. Please tell OSAM.', 'osam-bookings' ), $out['version'] ) );
+		}
+		$p = self::rollback_payload( $body['instruction'] ?? null, $out['version'] );
+		if ( $p ) {
+			// Remember withdrawn versions for good, so a hacked server can't offer them again.
+			$keep = array_values( array_unique( array_merge( self::blocked(), $p['block_versions'] ) ) );
+			update_option( self::BLOCKED, array_slice( $keep, -200 ), false );
+			$out['instruction'] = $body['instruction'];
+			$out['blocked']     = $p['block_versions'];
+			$out['rollback']    = version_compare( $out['version'], OSB_VERSION, '<' );
+			$out['forced']      = true;
+		} else {
+			$out['instruction'] = null;
+			$out['blocked']     = array(); // Unsigned lists are ignored.
+			$out['rollback']    = false;
+		}
+		if ( in_array( $out['version'], self::blocked(), true ) ) {
+			/* translators: %s version */
+			return array( 'error' => sprintf( __( 'The update server offered version %s, which OSAM has withdrawn, so it was ignored.', 'osam-bookings' ), $out['version'] ) );
+		}
+		if ( version_compare( $out['version'], OSB_VERSION, '<' ) && ! $p ) {
+			// An older version without a signed rollback: treat as "nothing to do".
+			$out['forced'] = false;
+		}
+		return $out;
 	}
 
 	/**
@@ -102,12 +274,12 @@ class OSB_Updater {
 			'version' => OSB_VERSION,
 			'wp'      => $wp_version,
 			'php'     => PHP_VERSION,
-			'caps'    => 'force,rollback',
+			'caps'    => 'force,rollback,signed',
 		);
 		if ( defined( 'OSB_UPDATE_KEY' ) && OSB_UPDATE_KEY ) {
 			$args['key'] = (string) OSB_UPDATE_KEY;
 		}
-		$url = add_query_arg( array_map( 'rawurlencode', $args ), self::server() . '/wp-json/osam-connect/v1/update' );
+		$url = add_query_arg( array_map( 'rawurlencode', $args ), self::server() . '/v1/update' );
 		$res = wp_remote_get(
 			$url,
 			array(
@@ -141,8 +313,8 @@ class OSB_Updater {
 				'sections'     => array_map( 'wp_kses_post', is_array( $body['sections'] ?? null ) ? $body['sections'] : array() ),
 				'forced'       => ! empty( $body['forced'] ),
 				'rollback'     => ! empty( $body['rollback'] ),
-				'blocked'      => array_values( array_filter( array_map( 'sanitize_text_field', (array) ( $body['blocked'] ?? array() ) ) ) ),
 			);
+			$out = self::vet( $out, $body );
 		}
 		$out['checked'] = time();
 		// Checked hourly so forced updates and rollbacks reach every site within about an hour.
@@ -163,7 +335,7 @@ class OSB_Updater {
 		if ( ! is_array( $i ) || isset( $i['error'] ) || empty( $i['version'] ) || empty( $i['package'] ) || OSB_VERSION === $i['version'] ) {
 			return '';
 		}
-		$blocked = in_array( OSB_VERSION, (array) ( $i['blocked'] ?? array() ), true );
+		$blocked = in_array( OSB_VERSION, (array) ( $i['blocked'] ?? array() ), true ) && ! empty( $i['instruction'] );
 		$newer   = version_compare( $i['version'], OSB_VERSION, '>' );
 		if ( $blocked || ( ! empty( $i['forced'] ) && ( $newer || ! empty( $i['rollback'] ) ) ) ) {
 			return $i['version'];
@@ -205,7 +377,67 @@ class OSB_Updater {
 			'icons'         => array(),
 			'banners'       => array(),
 			'compatibility' => new stdClass(),
+			'osb_sha256'    => $i['sha256'] ?? '',
+			'osb_signature' => $i['signature'] ?? '',
+			'osb_rollback'  => $i['instruction'] ?? null,
 		);
+	}
+
+	/**
+	 * Download our update and check its signature before WordPress unpacks it.
+	 *
+	 * @param bool|string|WP_Error $reply      Earlier filter result.
+	 * @param string               $package    Package URL.
+	 * @param WP_Upgrader          $upgrader   Upgrader.
+	 * @param array                $hook_extra Details (which plugin).
+	 * @return bool|string|WP_Error Local file path, an error, or $reply when it isn't ours.
+	 */
+	public static function pre_download( $reply, $package, $upgrader = null, $hook_extra = array() ) {
+		$base = self::basename();
+		$info = get_site_transient( self::CACHE );
+		$ours = ( isset( $hook_extra['plugin'] ) && $base === $hook_extra['plugin'] )
+			|| ( is_array( $info ) && ! empty( $info['package'] ) && $package === $info['package'] );
+		if ( false !== $reply || ! $ours || ! preg_match( '#^https?://#i', (string) $package ) ) {
+			return $reply;
+		}
+		$fail = static function ( $msg ) {
+			return new WP_Error( 'osb_unsigned', $msg );
+		};
+
+		// What WordPress was told to install (falls back to the cached info).
+		$tr  = get_site_transient( 'update_plugins' );
+		$row = is_object( $tr ) && isset( $tr->response[ $base ] ) ? $tr->response[ $base ] : null;
+		$ver = $row ? (string) $row->new_version : (string) ( $info['version'] ?? '' );
+		$sha = $row && ! empty( $row->osb_sha256 ) ? (string) $row->osb_sha256 : (string) ( $info['sha256'] ?? '' );
+		$sig = $row && ! empty( $row->osb_signature ) ? (string) $row->osb_signature : (string) ( $info['signature'] ?? '' );
+		$rb  = $row && isset( $row->osb_rollback ) ? $row->osb_rollback : ( $info['instruction'] ?? null );
+
+		if ( ! self::release_signed( $ver, $sha, $sig ) ) {
+			return $fail( __( 'Update stopped: this OSAM Bookings package isn’t signed by OSAM. Check for updates again; if it keeps happening, tell OSAM.', 'osam-bookings' ) );
+		}
+		if ( in_array( $ver, self::blocked(), true ) ) {
+			return $fail( __( 'Update stopped: OSAM has withdrawn that version.', 'osam-bookings' ) );
+		}
+		if ( version_compare( $ver, OSB_VERSION, '<' ) && ! self::rollback_payload( is_object( $rb ) ? (array) $rb : $rb, $ver ) ) {
+			return $fail( __( 'Update stopped: moving to an older version needs a signed rollback from OSAM.', 'osam-bookings' ) );
+		}
+
+		if ( ! function_exists( 'download_url' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		}
+		if ( $upgrader && isset( $upgrader->skin ) ) {
+			$upgrader->skin->feedback( 'downloading_package', $package );
+		}
+		$file = download_url( $package, 300 );
+		if ( is_wp_error( $file ) ) {
+			return $file;
+		}
+		$got = hash_file( 'sha256', $file );
+		if ( ! hash_equals( $sha, (string) $got ) ) {
+			wp_delete_file( $file );
+			return $fail( __( 'Update stopped: the downloaded OSAM Bookings zip doesn’t match OSAM’s signed release, so it wasn’t installed.', 'osam-bookings' ) );
+		}
+		return $file;
 	}
 
 	/**

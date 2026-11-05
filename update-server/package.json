@@ -1,0 +1,15 @@
+{
+  "name": "osam-update-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Serves signed OSAM Bookings releases from GitHub to client sites (updates.osamweb.com).",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "license": "UNLICENSED"
+}

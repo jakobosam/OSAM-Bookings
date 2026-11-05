@@ -1,0 +1,123 @@
+# Builds, signs and publishes a plugin release when you push a tag like v2.16.0
+# (or create one from GitHub: Releases -> Draft a new release -> "Choose a tag" -> type v2.16.0 -> Create).
+#
+# Before the signing job runs, GitHub asks a reviewer (you) to approve it, because
+# it uses the private signing key held in the "release-signing" environment.
+# Tags with a dash (v2.16.0-beta.1) are published as pre-releases -> beta channel only.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  PLUGIN_SLUG: osam-bookings
+  PLUGIN_MAIN: osam-bookings.php
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build zip
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the plugin version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          HEADER=$(grep -m1 -E '^[[:space:]/*#@]*Version:' "$PLUGIN_MAIN" | sed -E 's/.*Version:[[:space:]]*//' | tr -d '\r[:space:]')
+          CONST=$(grep -m1 -oE "define\( *'OSB_VERSION', *'[^']+'" "$PLUGIN_MAIN" | sed -E "s/.*'([^']+)'$/\1/")
+          echo "Tag: $TAG  Header: $HEADER  OSB_VERSION: ${CONST:-n/a}"
+          if [ "$TAG" != "$HEADER" ]; then echo "::error::Tag v$TAG doesn't match 'Version: $HEADER' in $PLUGIN_MAIN"; exit 1; fi
+          if [ -n "$CONST" ] && [ "$TAG" != "$CONST" ]; then echo "::error::Tag v$TAG doesn't match OSB_VERSION ($CONST)"; exit 1; fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Put OSAM's public signing key into the plugin
+        env:
+          OSAM_PUBLIC_KEY: ${{ vars.OSAM_PUBLIC_KEY }}
+        run: |
+          if ! printf '%s' "$OSAM_PUBLIC_KEY" | grep -qE '^[A-Za-z0-9+/]{43}=$'; then
+            echo "::error::Set the OSAM_PUBLIC_KEY repository variable (Settings -> Secrets and variables -> Actions -> Variables)"; exit 1
+          fi
+          grep -rl '__OSAM_PUBLIC_KEY__' --include='*.php' . | xargs -r sed -i "s#__OSAM_PUBLIC_KEY__#${OSAM_PUBLIC_KEY}#g"
+          grep -rn "PUBLIC_KEY = '" includes/class-updater.php
+
+      - name: Install Composer packages (if any)
+        if: hashFiles('composer.json') != ''
+        run: composer install --no-dev --optimize-autoloader --no-interaction --no-progress
+
+      - name: Build plugin zip
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p "build/$PLUGIN_SLUG"
+          # Anything listed in .distignore (one pattern per line) is left out too.
+          { cat .distignore 2>/dev/null || true; printf '%s\n' .git .github .gitignore .gitattributes .distignore build node_modules tests phpunit.xml.dist; } > /tmp/exclude
+          rsync -a --exclude-from=/tmp/exclude ./ "build/$PLUGIN_SLUG/"
+          cd build && zip -rqX "$PLUGIN_SLUG-$VERSION.zip" "$PLUGIN_SLUG"
+          unzip -l "$PLUGIN_SLUG-$VERSION.zip" | tail -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-zip
+          path: build/*.zip
+          retention-days: 7
+
+  sign-and-publish:
+    name: Sign and publish
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release-signing
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-zip
+          path: dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Sign
+        env:
+          OSAM_SIGNING_KEY: ${{ secrets.OSAM_SIGNING_KEY }}
+          OSAM_PUBLIC_KEY: ${{ vars.OSAM_PUBLIC_KEY }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: node .github/scripts/osam-sign.mjs release "dist/$PLUGIN_SLUG-$VERSION.zip" "$PLUGIN_SLUG" "$VERSION" "$PLUGIN_MAIN"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          PRE=""
+          case "$VERSION" in *-*) PRE="--prerelease";; esac
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            # Release was created in the GitHub website: just attach the signed files.
+            gh release upload "$GITHUB_REF_NAME" "dist/$PLUGIN_SLUG-$VERSION.zip" release.json --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "dist/$PLUGIN_SLUG-$VERSION.zip" release.json \
+              --title "OSAM Bookings $VERSION" --generate-notes --verify-tag $PRE
+          fi
+
+      - name: Tell the update server to fetch it
+        if: ${{ vars.UPDATE_SERVER_URL != '' }}
+        env:
+          ADMIN_TOKEN: ${{ secrets.UPDATE_SERVER_ADMIN_TOKEN }}
+          SERVER: ${{ vars.UPDATE_SERVER_URL }}
+        run: |
+          curl -sS --fail-with-body -H "Authorization: Bearer $ADMIN_TOKEN" "${SERVER%/}/v1/sync" || echo "::warning::Update server sync failed; it will pick the release up on its next scheduled sync."

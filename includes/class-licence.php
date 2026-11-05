@@ -74,7 +74,7 @@ class OSB_Licence {
 			$url = trim( (string) OSB_Settings::get( 'licence_url' ) );
 		}
 		if ( '' === $url ) {
-			$url = OSB_Updater::server() . '/wp-json/osam-connect/v1/licence';
+			$url = OSB_Updater::connector() . '/wp-json/osam-connect/v1/licence';
 		}
 		return esc_url_raw( (string) apply_filters( 'osb_licence_url', $url ) );
 	}
