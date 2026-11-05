@@ -4,7 +4,7 @@ Tags: booking, appointments, events, courses, stripe, paypal, woocommerce, zoom
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 2.15.0
+Stable tag: 2.16.0
 License: GPLv2 or later
 
 Booking system for services (appointments, group sessions), events and multi-session courses, with Stripe, PayPal, WooCommerce and pay-on-site payments.
@@ -175,6 +175,11 @@ Ready-made starting points: aftercare, how to prepare, welcome for first-timers,
 Every email sent about a booking (standard and custom) is listed under "Emails sent" on the booking.
 
 == Changelog ==
+
+= 2.16.0 =
+* Updates now come from OSAM's new update server (updates.osamweb.com) instead of connect.osamweb.com. Calendar sign-in and the subscription check still use the connector.
+* Every update is now signed by OSAM. The plugin checks the signature before installing anything and refuses unsigned or altered zips, so updates stay safe even if an update server were compromised.
+* Rollbacks are signed too, and only move sites that are on a withdrawn version. Withdrawn versions are remembered and never installed again.
 
 = 2.15.0 =
 * Central calendar (Bookings → Calendar): appointments, events, course sessions, resources and restaurant tables in one place, colour-coded, with month, week, day and list views.
