@@ -10,6 +10,14 @@ name: Rollback
 on:
   workflow_dispatch:
     inputs:
+      plugin:
+        description: 'Which plugin'
+        required: true
+        type: choice
+        default: osam-bookings
+        options:
+          - osam-bookings
+          - osam-turnstile
       target_version:
         description: 'Roll back TO this version (must already be released), e.g. 2.15.0'
         required: true
@@ -28,7 +36,7 @@ permissions:
   contents: read
 
 env:
-  PLUGIN_SLUG: osam-bookings
+  PLUGIN_SLUG: ${{ inputs.plugin }}
 
 jobs:
   rollback:
@@ -50,7 +58,9 @@ jobs:
         run: |
           TARGET="${TARGET#v}"
           if [ -z "$BLOCK" ]; then
-            BLOCK=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | sed 's/^v//' | \
+            # OSAM Bookings tags are v1.2.3; other plugins' tags are <slug>-v1.2.3.
+            if [ "$PLUGIN_SLUG" = "osam-bookings" ]; then PATTERN='^v[0-9]'; PREFIX='v'; else PATTERN="^${PLUGIN_SLUG}-v[0-9]"; PREFIX="${PLUGIN_SLUG}-v"; fi
+            BLOCK=$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E "$PATTERN" | sed "s/^${PREFIX}//" | \
               while read -r v; do php -r "exit(version_compare('$v','$TARGET','>')?0:1);" && echo "$v"; done | paste -sd, -)
           fi
           if [ -z "$BLOCK" ]; then echo "::error::No releases newer than $TARGET, so there's nothing to withdraw."; exit 1; fi

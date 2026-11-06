@@ -67,24 +67,28 @@ Test on one site first: update it, then in **OSAM Bookings → Settings → Gene
 ## Day to day
 
 - **New version**: bump `Version:` and `OSB_VERSION` in `osam-bookings.php` (and the readme changelog), then publish a release with tag `vX.Y.Z`. Tags with a dash (`v2.18.0-beta.1`) are beta-only.
-- **Rollback**: Actions → *Rollback* → Run workflow → target version, versions to withdraw (blank = everything newer), sites (`*` or domains) → approve. Affected sites move back within about an hour and never install the withdrawn versions again. To fix, release a new, higher version.
+- **OSAM Turnstile**: its files are in the `osam-turnstile/` folder. Bump `Version:` in `osam-turnstile/osam-turnstile.php` (and its readme changelog), then publish a release with tag `osam-turnstile-vX.Y.Z` (workflow *Release OSAM Turnstile*). Same key, approval and server.
+- **Rollback**: Actions → *Rollback* → Run workflow → plugin, target version, versions to withdraw (blank = everything newer), sites (`*` or domains) → approve. Affected sites move back within about an hour and never install the withdrawn versions again. To fix, release a new, higher version.
 - **Per-site settings**: File Manager → `osam-update-server/data/config.json` (no restart needed):
 
 ```json
 {
   "default_channel": "stable",
   "allowed_sites": [],
-  "minimum_version": { "osam-bookings": "" },
+  "minimum_version": { "osam-bookings": "", "osam-turnstile": "" },
   "sites": {
     "staging.example.co.uk": { "channel": "beta" },
-    "fragile-client.co.uk": { "pin": "2.16.0" }
+    "fragile-client.co.uk": { "pin": "2.16.0" },
+    "other-client.co.uk": { "pin": { "osam-bookings": "2.16.0", "osam-turnstile": "1.3.0" } }
   }
 }
 ```
 
-  - `allowed_sites`: empty = any site; otherwise only these domains get updates.
-  - `minimum_version`: sites below it are updated straight away, even with auto-updates off.
-  - `pin`: keep a site on one version (only moves it forward; going back needs a rollback).
+  - `allowed_sites`: empty = any site; otherwise only these domains get updates (both plugins).
+  - `channel`: applies to both plugins.
+  - `minimum_version`: per plugin; sites below it are updated straight away, even with auto-updates off.
+  - `pin`: keep a site on one version (only moves it forward; going back needs a rollback). A plain version pins OSAM Bookings only; use `{ "plugin": "version" }` to pin either plugin.
+  - `/v1/status` → `site_versions` counts sites per plugin and version.
 
 ## Updating this server
 

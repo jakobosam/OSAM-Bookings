@@ -27,7 +27,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const env = process.env;
 const CONF = {
   repo: String(env.GITHUB_REPO || '').trim(),
@@ -180,7 +180,7 @@ async function config() {
 function minimumFor(cfg, slug) {
   const m = cfg.minimum_version;
   if (!m) return '';
-  if (typeof m === 'string') return m;
+  if (typeof m === 'string') return slug === 'osam-bookings' ? m : ''; // a plain string means OSAM Bookings
   return String(m[slug] || '');
 }
 
@@ -274,7 +274,8 @@ async function syncFromGithub() {
           skipped.push(`${rel.tag_name}: ${e.message}`);
           continue;
         }
-        const tagVersion = String(rel.tag_name || '').replace(/^v/, '');
+        // Tags are v1.2.3 (OSAM Bookings) or <slug>-v1.2.3 (other plugins, e.g. osam-turnstile-v1.3.0).
+        const tagVersion = String(rel.tag_name || '').replace(new RegExp(`^${meta && validSlug(meta.slug) ? meta.slug : '\\0'}-`), '').replace(/^v/, '');
         if (!meta || !validSlug(meta.slug) || meta.version !== tagVersion || !releaseSigned(meta)) {
           skipped.push(`${rel.tag_name}: release.json is not signed by PUBLIC_KEY or doesn't match the tag`);
           continue;
@@ -365,7 +366,11 @@ async function answerUpdate(q, base) {
   const channel = siteCfg.channel === 'beta' || (!siteCfg.channel && cfg.default_channel === 'beta') ? 'beta' : 'stable';
 
   // Note the site for /v1/status.
-  S.sites[host] = { ...(S.sites[host] || {}), slug, version: installed, wp: String(q.get('wp') || ''), php: String(q.get('php') || ''), channel, last_seen: new Date().toISOString() };
+  const prev = S.sites[host] || {};
+  const seenAt = new Date().toISOString();
+  const plugins = { ...(prev.plugins || (prev.slug ? { [prev.slug]: { version: prev.version, last_seen: prev.last_seen } } : {})), [slug]: { version: installed, last_seen: seenAt } };
+  S.sites[host] = { ...prev, wp: String(q.get('wp') || ''), php: String(q.get('php') || ''), channel, last_seen: seenAt, plugins };
+  if (slug === 'osam-bookings') Object.assign(S.sites[host], { slug, version: installed });
   S.sitesDirty = true;
 
   // Pick up new releases if the scheduled sync hasn't run for a while (Passenger may have slept).
@@ -394,9 +399,10 @@ async function answerUpdate(q, base) {
       break;
     }
   }
-  // 2. A pinned version for this site.
-  if (!chosen && siteCfg.pin) {
-    chosen = all.find((m) => m.version === String(siteCfg.pin) && !blocked.has(m.version)) || null;
+  // 2. A pinned version for this site: "pin": "2.16.0" (OSAM Bookings) or "pin": { "osam-turnstile": "1.3.0" }.
+  const pin = siteCfg.pin && typeof siteCfg.pin === 'object' ? siteCfg.pin[slug] : slug === 'osam-bookings' ? siteCfg.pin : '';
+  if (!chosen && pin) {
+    chosen = all.find((m) => m.version === String(pin) && !blocked.has(m.version)) || null;
   }
   // 3. The newest release on the site's channel.
   if (!chosen) chosen = offerable[0] || null;
@@ -528,7 +534,13 @@ async function handle(req, res) {
     const cfg = await config();
     const releases = [...S.releases.values()].sort((a, b) => cmpVersion(b.version, a.version)).map((r) => ({ slug: r.slug, version: r.version, prerelease: r.prerelease, published_at: r.published_at, size: r.size }));
     const versions = {};
-    for (const s of Object.values(S.sites)) versions[s.version] = (versions[s.version] || 0) + 1;
+    // { "osam-bookings": { "2.16.0": 12 }, "osam-turnstile": { "1.3.0": 9 } }
+    for (const s of Object.values(S.sites)) {
+      for (const [slug, p] of Object.entries(s.plugins || (s.slug ? { [s.slug]: { version: s.version } } : {}))) {
+        versions[slug] = versions[slug] || {};
+        versions[slug][p.version] = (versions[slug][p.version] || 0) + 1;
+      }
+    }
     return send(res, 200, {
       ok: true,
       server: VERSION,

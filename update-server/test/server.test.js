@@ -26,15 +26,15 @@ const KEY = keypair();
 const OTHER = keypair();
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'osam-us-'));
 
-function makeRelease(version, key = KEY, { tamper = false } = {}) {
+function makeRelease(version, key = KEY, { tamper = false, slug = 'osam-bookings' } = {}) {
   const dir = fs.mkdtempSync(path.join(tmp, 'rel-'));
-  fs.writeFileSync(path.join(dir, 'osam-bookings.php'), `<?php\n/**\n * Plugin Name: OSAM Bookings\n * Version: ${version}\n * Requires at least: 6.2\n * Requires PHP: 7.4\n */\n`);
-  fs.writeFileSync(path.join(dir, 'readme.txt'), `=== OSAM Bookings ===\n\n== Changelog ==\n\n= ${version} =\n* Change in ${version}\n`);
-  const zip = path.join(dir, `osam-bookings-${version}.zip`);
+  fs.writeFileSync(path.join(dir, `${slug}.php`), `<?php\n/**\n * Plugin Name: ${slug}\n * Version: ${version}\n * Requires at least: 6.2\n * Requires PHP: 7.4\n */\n`);
+  fs.writeFileSync(path.join(dir, 'readme.txt'), `=== ${slug} ===\n\n== Changelog ==\n\n= ${version} =\n* Change in ${version}\n`);
+  const zip = path.join(dir, `${slug}-${version}.zip`);
   fs.writeFileSync(zip, crypto.randomBytes(2048));
-  execFileSync('node', [SIGN, 'release', zip, 'osam-bookings', version, path.join(dir, 'osam-bookings.php')], { cwd: dir, env: { ...process.env, OSAM_SIGNING_KEY: key.seed, OSAM_PUBLIC_KEY: '' } });
+  execFileSync('node', [SIGN, 'release', zip, slug, version, path.join(dir, `${slug}.php`)], { cwd: dir, env: { ...process.env, OSAM_SIGNING_KEY: key.seed, OSAM_PUBLIC_KEY: '' } });
   if (tamper) fs.appendFileSync(zip, 'x');
-  return { version, zip: fs.readFileSync(zip), meta: fs.readFileSync(path.join(dir, 'release.json')) };
+  return { version, slug, zip: fs.readFileSync(zip), meta: fs.readFileSync(path.join(dir, 'release.json')) };
 }
 
 function signRollback(env, key = KEY) {
@@ -51,12 +51,12 @@ function setReleases(list) {
   let id = 1;
   for (const r of list) {
     const a = [];
-    for (const [name, buf] of [['release.json', r.meta], [`osam-bookings-${r.version}.zip`, r.zip]]) {
+    for (const [name, buf] of [['release.json', r.meta], [`${r.slug}-${r.version}.zip`, r.zip]]) {
       const aid = id++;
       assets.set(String(aid), buf);
       a.push({ id: aid, name, url: `${ghBase}/repos/o/r/releases/assets/${aid}` });
     }
-    releases.push({ tag_name: `v${r.version}`, draft: false, prerelease: r.version.includes('-'), published_at: '2026-11-05T10:00:00Z', assets: a });
+    releases.push({ tag_name: r.slug === 'osam-bookings' ? `v${r.version}` : `${r.slug}-v${r.version}`, draft: false, prerelease: r.version.includes('-'), published_at: '2026-11-05T10:00:00Z', assets: a });
   }
 }
 const gh = http.createServer((req, res) => {
@@ -177,6 +177,34 @@ test('allowed_sites limits who gets updates', async () => {
   assert.equal(no.code, 'not_allowed');
   fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({}));
   await new Promise((r) => setTimeout(r, 20));
+});
+
+test('a second plugin (osam-turnstile) with its own tags, pins and versions', async () => {
+  const ts = { slug: 'osam-turnstile' };
+  setReleases([makeRelease('2.15.0'), makeRelease('2.16.0'), makeRelease('2.17.0-beta.1'), makeRelease('1.3.0', KEY, ts), makeRelease('1.4.0', KEY, ts)]);
+  const s = await sync();
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.equal(s.skipped.length, 0, JSON.stringify(s));
+  const tsUrl = (site, v) => `${base}/v1/update?slug=osam-turnstile&site=${site}&version=${v}&caps=force,rollback,signed`;
+  const t = await (await fetch(tsUrl('client.co.uk', '1.3.0'))).json();
+  assert.equal(t.version, '1.4.0');
+  assert.match(t.package, /\/v1\/download\/osam-turnstile\/1\.4\.0\.zip/);
+  assert.equal(crypto.createHash('sha256').update(Buffer.from(await (await fetch(t.package)).arrayBuffer())).digest('hex'), t.sha256);
+  assert.equal((await upd('client.co.uk', '2.16.0')).version, '2.16.0'); // Bookings unaffected
+  // A plain pin / minimum means OSAM Bookings only; an object names the plugin.
+  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ minimum_version: '2.16.0', sites: { 'p.test': { pin: '2.15.0' }, 'q.test': { pin: { 'osam-turnstile': '1.3.0' } } } }));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await (await fetch(tsUrl('p.test', '1.3.0'))).json()).version, '1.4.0');
+  assert.equal((await (await fetch(tsUrl('p.test', '1.3.0'))).json()).forced, false);
+  assert.equal((await upd('p.test', '2.15.0')).version, '2.15.0');
+  assert.equal((await (await fetch(tsUrl('q.test', '1.3.0'))).json()).version, '1.3.0');
+  assert.equal((await upd('q.test', '2.15.0')).version, '2.16.0');
+  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({}));
+  await new Promise((r) => setTimeout(r, 20));
+  const st = await (await fetch(`${base}/v1/status`, { headers: admin })).json();
+  assert.equal(st.site_versions['osam-turnstile']['1.3.0'] >= 1, true);
+  assert.equal(st.sites['client.co.uk'].plugins['osam-turnstile'].version, '1.3.0');
+  assert.equal(st.sites['client.co.uk'].version, '2.16.0');
 });
 
 test('signed rollbacks: scoped, forced, and withdrawn versions never offered', async () => {

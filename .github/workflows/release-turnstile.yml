@@ -1,0 +1,117 @@
+# Builds, signs and publishes an OSAM Turnstile release when you push a tag like osam-turnstile-v1.3.0
+# (or from GitHub: Releases -> Draft a new release -> "Choose a tag" -> type osam-turnstile-v1.3.0 -> Create).
+#
+# The plugin's files live in the osam-turnstile/ folder of this repo. Same signing key, same
+# approval step and same update server as OSAM Bookings (see release.yml).
+# Tags with a dash after the version (osam-turnstile-v1.3.0-beta.1) are pre-releases -> beta channel only.
+
+name: Release OSAM Turnstile
+
+on:
+  push:
+    tags: ['osam-turnstile-v*']
+
+permissions:
+  contents: read
+
+env:
+  PLUGIN_SLUG: osam-turnstile
+  PLUGIN_DIR: osam-turnstile
+  PLUGIN_MAIN: osam-turnstile/osam-turnstile.php
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build zip
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the plugin version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME#${PLUGIN_SLUG}-v}"
+          HEADER=$(grep -m1 -E '^[[:space:]/*#@]*Version:' "$PLUGIN_MAIN" | sed -E 's/.*Version:[[:space:]]*//' | tr -d '\r[:space:]')
+          echo "Tag: $TAG  Header: $HEADER"
+          if [ "$TAG" != "$HEADER" ]; then echo "::error::Tag $GITHUB_REF_NAME doesn't match 'Version: $HEADER' in $PLUGIN_MAIN"; exit 1; fi
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Put OSAM's public signing key into the plugin
+        env:
+          OSAM_PUBLIC_KEY: ${{ vars.OSAM_PUBLIC_KEY }}
+        run: |
+          if ! printf '%s' "$OSAM_PUBLIC_KEY" | grep -qE '^[A-Za-z0-9+/]{43}=$'; then
+            echo "::error::Set the OSAM_PUBLIC_KEY repository variable (Settings -> Secrets and variables -> Actions -> Variables)"; exit 1
+          fi
+          grep -rl '__OSAM_PUBLIC_KEY__' --include='*.php' "$PLUGIN_DIR" | xargs -r sed -i "s#__OSAM_PUBLIC_KEY__#${OSAM_PUBLIC_KEY}#g"
+          grep -rn "PUBLIC_KEY = '" "$PLUGIN_DIR/includes/updater.php"
+
+      - name: Build plugin zip
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p build
+          rsync -a --exclude .distignore "$PLUGIN_DIR/" "build/$PLUGIN_SLUG/"
+          cd build && zip -rqX "$PLUGIN_SLUG-$VERSION.zip" "$PLUGIN_SLUG"
+          unzip -l "$PLUGIN_SLUG-$VERSION.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugin-zip
+          path: build/*.zip
+          retention-days: 7
+
+  sign-and-publish:
+    name: Sign and publish
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release-signing
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: plugin-zip
+          path: dist
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Sign
+        env:
+          OSAM_SIGNING_KEY: ${{ secrets.OSAM_SIGNING_KEY }}
+          OSAM_PUBLIC_KEY: ${{ vars.OSAM_PUBLIC_KEY }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: node .github/scripts/osam-sign.mjs release "dist/$PLUGIN_SLUG-$VERSION.zip" "$PLUGIN_SLUG" "$VERSION" "$PLUGIN_MAIN"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          PRE=""
+          case "$VERSION" in *-*) PRE="--prerelease";; esac
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "dist/$PLUGIN_SLUG-$VERSION.zip" release.json --clobber
+          else
+            # --latest=false keeps OSAM Bookings as the repo's "Latest" release.
+            gh release create "$GITHUB_REF_NAME" "dist/$PLUGIN_SLUG-$VERSION.zip" release.json \
+              --title "OSAM Turnstile $VERSION" --notes "OSAM Turnstile $VERSION. See osam-turnstile/readme.txt for the changelog." \
+              --verify-tag --latest=false $PRE
+          fi
+
+      - name: Tell the update server to fetch it
+        if: ${{ vars.UPDATE_SERVER_URL != '' }}
+        env:
+          ADMIN_TOKEN: ${{ secrets.UPDATE_SERVER_ADMIN_TOKEN }}
+          SERVER: ${{ vars.UPDATE_SERVER_URL }}
+        run: |
+          curl -sS --fail-with-body -H "Authorization: Bearer $ADMIN_TOKEN" "${SERVER%/}/v1/sync" || echo "::warning::Update server sync failed; it will pick the release up on its next scheduled sync."
