@@ -339,6 +339,7 @@ class OSB_Admin_Events {
 			OSB_Admin::redirect( admin_url( 'admin.php?page=osb-events' ), 'has_items' );
 		}
 		OSB_DB::delete( 'events', $id );
+		do_action( 'osb_event_deleted', $id );
 		OSB_Admin::redirect( admin_url( 'admin.php?page=osb-events' ), 'deleted' );
 	}
 }

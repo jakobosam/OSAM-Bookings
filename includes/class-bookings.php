@@ -647,15 +647,21 @@ class OSB_Bookings {
 				'updated_at'     => current_time( 'mysql' ),
 			)
 		);
+		$invoice = null;
 		if ( $payment_id && class_exists( 'OSB_Invoices' ) ) {
 			// Made now so the confirmation email that follows can carry it.
-			OSB_Invoices::on_payment( OSB_DB::get( 'bookings', $booking->id ), $payment_id );
+			$invoice = OSB_Invoices::on_payment( OSB_DB::get( 'bookings', $booking->id ), $payment_id );
 		}
 
 		if ( in_array( $booking->status, array( 'pending_payment', 'cancelled', 'payment_failed' ), true ) ) {
 			// A late payment for an expired hold is still accepted; staff can review it.
 			$target = apply_filters( 'osb_paid_status', 'confirmed', $booking );
 			self::set_status( $booking->id, $target );
+		}
+		if ( $invoice && 'pending_payment' !== $booking->status ) {
+			// Paid online after the booking emails went out (a "Pay now" link on a confirmed booking):
+			// no confirmation follows to carry the invoice, so it goes on its own.
+			OSB_Invoices::email_receipt( $invoice );
 		}
 
 		do_action( 'osb_booking_paid', OSB_DB::get( 'bookings', $booking->id ), $gateway, $txn );
@@ -733,6 +739,12 @@ class OSB_Bookings {
 			'schedule'       => $intake ? OSB_Courses::schedule( $intake->id, $course ) : array(),
 		);
 		$details['session_count'] = count( $details['schedule'] );
+		// "Pay now": only when money is owed and it can be paid online (see OSB_Payments::payable()).
+		// Customer-facing screens only (booking page, My bookings — both REST); wp-admin lists skip the lookup.
+		$due                   = is_admin() && ! wp_doing_ajax() ? 0 : OSB_Payments::payable( $booking );
+		$details['amount_due'] = $due > 0 ? OSB_Settings::money( $due, $booking->currency ) : '';
+		$details['pay_url']    = $due > 0 ? OSB_Payments::pay_url( $booking ) : '';
+		$details['pay_label']  = $due > 0 ? OSB_Payments::pay_label( $booking ) : '';
 		return apply_filters( 'osb_booking_details', $details, $booking );
 	}
 

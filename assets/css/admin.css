@@ -473,7 +473,13 @@ body[class*="page_osb-"] #wpfooter { display: none; }
 .osb-admin .osb-settings__nav a:hover { background: var(--o-surface); }
 .osb-admin .osb-settings__nav a.is-active { background: var(--o-surface); color: var(--o-accent) !important; box-shadow: var(--o-shadow), 0 0 0 1px var(--o-border); font-weight: 600; }
 .osb-admin .osb-settings__nav a.is-active .dashicons { color: var(--o-accent); }
-@media (max-width: 960px) { .osb-admin .osb-settings { grid-template-columns: 1fr; } .osb-admin .osb-settings__nav { position: static; flex-direction: row; overflow-x: auto; } .osb-admin .osb-settings__nav a { white-space: nowrap; } }
+.osb-admin .osb-settings__navhead { display: block; padding: 14px 12px 4px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--o-faint); }
+.osb-admin .osb-settings__navhead:first-child { padding-top: 0; }
+.osb-admin .osb-gateway__full { margin: 0 0 16px; }
+.osb-admin .osb-gateway__full .osb-alert { margin-bottom: 10px; }
+.osb-admin .osb-gateway__full .osb-help .dashicons-yes { color: var(--o-ok); vertical-align: -5px; }
+.osb-admin .osb-btn--danger { color: #b42318 !important; }
+@media (max-width: 960px) { .osb-admin .osb-settings { grid-template-columns: 1fr; } .osb-admin .osb-settings__nav { position: static; flex-direction: row; overflow-x: auto; } .osb-admin .osb-settings__nav a { white-space: nowrap; } .osb-admin .osb-settings__navhead { display: none; } }
 
 .osb-admin .osb-gateway { padding: 0; overflow: hidden; }
 .osb-admin .osb-gateway__head { display: flex; align-items: center; gap: 14px; padding: 18px 22px; }

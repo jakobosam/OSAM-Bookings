@@ -19,6 +19,54 @@ class OSB_Admin_Settings {
 		add_action( 'admin_post_osb_save_settings', array( __CLASS__, 'save' ) );
 		add_action( 'admin_post_osb_test_email', array( __CLASS__, 'test_email' ) );
 		add_action( 'admin_post_osb_zoom_test', array( __CLASS__, 'zoom_test' ) );
+		add_action( 'admin_post_osb_stripe_check', array( __CLASS__, 'stripe_check' ) );
+		add_action( 'admin_post_osb_stripe_disconnect', array( __CLASS__, 'stripe_disconnect' ) );
+	}
+
+	/**
+	 * The Stripe gateway, if it's registered.
+	 *
+	 * @return OSB_Gateway_Stripe|null
+	 */
+	private static function stripe() {
+		$all = osb()->payments->all();
+		return isset( $all['stripe'] ) && $all['stripe'] instanceof OSB_Gateway_Stripe ? $all['stripe'] : null;
+	}
+
+	/**
+	 * "Check connection": re-check the saved Stripe key and repair the webhook.
+	 */
+	public static function stripe_check() {
+		OSB_Admin::verify( 'osb_stripe_check', 'manage_options' );
+		$url    = admin_url( 'admin.php?page=osb-settings&tab=payments' );
+		$stripe = self::stripe();
+		$mode   = isset( $_GET['mode'] ) && 'live' === $_GET['mode'] ? 'live' : 'test';
+		$key    = $stripe ? trim( (string) OSB_Settings::get( 'stripe_' . $mode . '_secret' ) ) : '';
+		if ( '' === $key ) {
+			OSB_Admin::redirect( $url, 'error' );
+		}
+		$r = $stripe->connect( $key );
+		if ( is_wp_error( $r ) ) {
+			OSB_Admin::flash_error( $r->get_error_message() );
+			OSB_Admin::redirect( $url, 'none' );
+		}
+		if ( $r['warning'] ) {
+			OSB_Admin::flash_warnings( array( $r['warning'] ) );
+		}
+		$problem = (string) OSB_Settings::get( 'stripe_' . $mode . '_webhook_error' );
+		OSB_Admin::redirect( $url, '' === $problem ? 'stripe_ok' : 'stripe_ok_nohook' );
+	}
+
+	/**
+	 * "Disconnect": forget the Stripe key for a mode.
+	 */
+	public static function stripe_disconnect() {
+		OSB_Admin::verify( 'osb_stripe_disconnect', 'manage_options' );
+		$stripe = self::stripe();
+		if ( $stripe ) {
+			$stripe->disconnect( isset( $_GET['mode'] ) && 'live' === $_GET['mode'] ? 'live' : 'test' );
+		}
+		OSB_Admin::redirect( admin_url( 'admin.php?page=osb-settings&tab=payments' ), 'stripe_off' );
 	}
 
 	/**
@@ -26,7 +74,29 @@ class OSB_Admin_Settings {
 	 */
 	public static function zoom_test() {
 		OSB_Admin::verify( 'osb_zoom_test', 'manage_options' );
-		$res = OSB_Meetings::zoom( 'GET', '/users/me' );
+		// Do what a real booking does — make a meeting, move it, delete it — so every permission
+		// the app needs is checked, not just the sign-in.
+		$start = gmdate( 'Y-m-d\TH:i:s\Z', time() + WEEK_IN_SECONDS );
+		$res   = OSB_Meetings::zoom(
+			'POST',
+			'/users/me/meetings',
+			array(
+				'topic'      => 'OSAM Bookings connection test (safe to delete)',
+				'type'       => 2,
+				'start_time' => $start,
+				'duration'   => 15,
+			)
+		);
+		if ( ! is_wp_error( $res ) && ! empty( $res['id'] ) ) {
+			$path = '/meetings/' . rawurlencode( (string) $res['id'] );
+			$res  = OSB_Meetings::zoom( 'PATCH', $path, array( 'start_time' => gmdate( 'Y-m-d\TH:i:s\Z', time() + WEEK_IN_SECONDS + HOUR_IN_SECONDS ) ) );
+			$gone = OSB_Meetings::zoom( 'DELETE', $path );
+			if ( ! is_wp_error( $res ) ) {
+				$res = $gone;
+			}
+		} elseif ( ! is_wp_error( $res ) ) {
+			$res = new WP_Error( 'osb_zoom_test', __( 'Zoom accepted the details but didn’t create a test meeting.', 'osam-bookings' ) );
+		}
 		if ( is_wp_error( $res ) ) {
 			set_transient( 'osb_admin_error_' . get_current_user_id(), $res->get_error_message(), 60 );
 			OSB_Admin::redirect( admin_url( 'admin.php?page=osb-settings&tab=meetings' ), 'none' );
@@ -40,17 +110,18 @@ class OSB_Admin_Settings {
 	 * @return array
 	 */
 	public static function tabs() {
+		// [ label, icon, group ] — grouped under headings in the side menu, most used first.
 		$tabs = array(
-			'features'   => array( __( 'Features', 'osam-bookings' ), 'dashicons-screenoptions' ),
-			'general'    => array( __( 'General', 'osam-bookings' ), 'dashicons-admin-settings' ),
-			'appearance' => array( __( 'Booking form design', 'osam-bookings' ), 'dashicons-art' ),
-			'form'       => array( __( 'Form fields', 'osam-bookings' ), 'dashicons-feedback' ),
-			'payments'   => array( __( 'Payments', 'osam-bookings' ), 'dashicons-money-alt' ),
-			'emails'     => array( __( 'Emails', 'osam-bookings' ), 'dashicons-email-alt' ),
-			'invoices'   => array( __( 'Invoices', 'osam-bookings' ), 'dashicons-media-spreadsheet' ),
-			'calendars'  => array( __( 'Calendar sync', 'osam-bookings' ), 'dashicons-update' ),
-			'meetings'   => array( __( 'Online meetings', 'osam-bookings' ), 'dashicons-video-alt2' ),
-			'subscription' => array( __( 'Subscription', 'osam-bookings' ), 'dashicons-shield' ),
+			'general'      => array( __( 'General', 'osam-bookings' ), 'dashicons-admin-settings', 'business' ),
+			'payments'     => array( __( 'Payments', 'osam-bookings' ), 'dashicons-money-alt', 'business' ),
+			'emails'       => array( __( 'Email sending & design', 'osam-bookings' ), 'dashicons-email-alt', 'business' ),
+			'invoices'     => array( __( 'Invoices', 'osam-bookings' ), 'dashicons-media-spreadsheet', 'business' ),
+			'appearance'   => array( __( 'Look & wording', 'osam-bookings' ), 'dashicons-art', 'form' ),
+			'form'         => array( __( 'Questions to ask', 'osam-bookings' ), 'dashicons-feedback', 'form' ),
+			'calendars'    => array( __( 'Calendar sync', 'osam-bookings' ), 'dashicons-update', 'connect' ),
+			'meetings'     => array( __( 'Zoom, Meet & Teams', 'osam-bookings' ), 'dashicons-video-alt2', 'connect' ),
+			'features'     => array( __( 'Features on/off', 'osam-bookings' ), 'dashicons-screenoptions', 'advanced' ),
+			'subscription' => array( __( 'OSAM subscription', 'osam-bookings' ), 'dashicons-shield', 'advanced' ),
 		);
 		if ( ! OSB_Settings::feature( 'calendar_sync' ) ) {
 			unset( $tabs['calendars'] );
@@ -70,8 +141,22 @@ class OSB_Admin_Settings {
 	 * @return string
 	 */
 	public static function current_tab() {
-		$tab = isset( $_GET['tab'] ) ? sanitize_key( $_GET['tab'] ) : 'features'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		return isset( self::tabs()[ $tab ] ) ? $tab : 'features';
+		$tab = isset( $_GET['tab'] ) ? sanitize_key( $_GET['tab'] ) : 'general'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		return isset( self::tabs()[ $tab ] ) ? $tab : 'general';
+	}
+
+	/**
+	 * Headings the settings tabs are grouped under.
+	 *
+	 * @return array
+	 */
+	public static function tab_groups() {
+		return array(
+			'business' => __( 'Your business', 'osam-bookings' ),
+			'form'     => __( 'Booking form', 'osam-bookings' ),
+			'connect'  => __( 'Connections', 'osam-bookings' ),
+			'advanced' => __( 'Advanced', 'osam-bookings' ),
+		);
 	}
 
 	/**
@@ -110,8 +195,17 @@ class OSB_Admin_Settings {
 		?>
 		<div class="osb-settings">
 			<nav class="osb-settings__nav">
-				<?php foreach ( self::tabs() as $key => $t ) : ?>
-					<a href="<?php echo esc_url( admin_url( 'admin.php?page=osb-settings&tab=' . $key ) ); ?>" class="<?php echo $tab === $key ? 'is-active' : ''; ?>"><span class="dashicons <?php echo esc_attr( $t[1] ); ?>"></span><?php echo esc_html( $t[0] ); ?></a>
+				<?php
+				$heads = self::tab_groups();
+				$last  = '';
+				foreach ( self::tabs() as $key => $t ) :
+					$g = isset( $t[2] ) ? $t[2] : '';
+					if ( $g !== $last && isset( $heads[ $g ] ) ) :
+						$last = $g;
+						?>
+						<span class="osb-settings__navhead"><?php echo esc_html( $heads[ $g ] ); ?></span>
+					<?php endif; ?>
+					<a href="<?php echo esc_url( admin_url( 'admin.php?page=osb-settings&tab=' . $key ) ); ?>" class="<?php echo $tab === $key ? 'is-active' : ''; ?>"<?php echo $tab === $key ? ' aria-current="page"' : ''; ?>><span class="dashicons <?php echo esc_attr( $t[1] ); ?>"></span><?php echo esc_html( $t[0] ); ?></a>
 				<?php endforeach; ?>
 			</nav>
 			<div class="osb-settings__body">
@@ -251,7 +345,9 @@ class OSB_Admin_Settings {
 		</div>
 
 		<div class="osb-card">
-			<?php OSB_Admin::card_head( __( 'Connection', 'osam-bookings' ), $locked ? __( 'Set in wp-config.php, so it can’t be changed here.', 'osam-bookings' ) : __( 'OSAM fills these in. Tip: put them in wp-config.php instead (see below) so they can’t be changed from the dashboard.', 'osam-bookings' ) ); ?>
+			<?php OSB_Admin::card_head( __( 'Connection', 'osam-bookings' ), $locked ? __( 'Set in wp-config.php, so it can’t be changed here.', 'osam-bookings' ) : __( 'OSAM fills these in — you don’t need to change anything here.', 'osam-bookings' ) ); ?>
+			<details class="osb-advanced" <?php echo $on ? '' : 'open'; ?>>
+			<summary><?php esc_html_e( 'Connection details (for OSAM)', 'osam-bookings' ); ?></summary>
 			<table class="form-table" role="presentation">
 				<tr><th scope="row"><label for="osb_lk"><?php esc_html_e( 'Subscription key', 'osam-bookings' ); ?></label></th><td>
 					<?php if ( $locked ) : ?><code>OSB_LICENCE_KEY</code><?php else : ?><input type="password" id="osb_lk" name="licence_key" class="regular-text" autocomplete="new-password" value="<?php echo $on ? '••••••••' : ''; ?>"><?php endif; ?>
@@ -262,8 +358,8 @@ class OSB_Admin_Settings {
 					<p class="description"><?php esc_html_e( 'Optional. Sent with each check to help billing find the right service.', 'osam-bookings' ); ?></p>
 				</td></tr>
 				<tr><th scope="row"><label for="osb_lu"><?php esc_html_e( 'Status address', 'osam-bookings' ); ?></label></th><td>
-					<?php if ( $locked && defined( 'OSB_LICENCE_URL' ) ) : ?><code><?php echo esc_html( OSB_Licence::url() ); ?></code><?php else : ?><input type="url" id="osb_lu" name="licence_url" class="large-text" value="<?php echo esc_attr( $s['licence_url'] ); ?>" placeholder="<?php echo esc_attr( OSB_Updater::connector() . '/wp-json/osam-connect/v1/licence' ); ?>"><?php endif; ?>
-					<p class="description"><?php esc_html_e( 'Where this site asks for its status, hourly (every 10 minutes while overdue or suspended). Leave empty to use the OSAM Connector.', 'osam-bookings' ); ?></p>
+					<?php if ( $locked && defined( 'OSB_LICENCE_URL' ) ) : ?><code><?php echo esc_html( OSB_Licence::url() ); ?></code><?php else : ?><input type="url" id="osb_lu" name="licence_url" class="large-text" value="<?php echo esc_attr( '' !== trim( (string) $s['licence_url'] ) ? $s['licence_url'] : OSB_Licence::default_url() ); ?>" placeholder="<?php echo esc_attr( OSB_Licence::default_url() ); ?>"><?php endif; ?>
+					<p class="description"><?php esc_html_e( 'Where this site asks for its status, hourly (every 10 minutes while overdue or suspended). Already set to the OSAM Connector — only change it if OSAM asks you to.', 'osam-bookings' ); ?></p>
 				</td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Webhook for billing', 'osam-bookings' ); ?></th><td>
 					<code><?php echo esc_html( OSB_Licence::webhook_url() ); ?></code> <button type="button" class="osb-iconbtn osb-copy" data-copy="<?php echo esc_attr( OSB_Licence::webhook_url() ); ?>" title="<?php esc_attr_e( 'Copy', 'osam-bookings' ); ?>"><span class="dashicons dashicons-admin-page"></span></button>
@@ -274,6 +370,7 @@ class OSB_Admin_Settings {
 				<pre class="osb-code"><code>define( 'OSB_LICENCE_KEY', '<?php esc_html_e( 'the-key-from-OSAM', 'osam-bookings' ); ?>' );
 define( 'OSB_LICENCE_SERVICE', '<?php echo esc_html( $s['licence_service'] ? $s['licence_service'] : '123' ); ?>' );          // optional
 define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
+			</details>
 			</details>
 		</div>
 
@@ -494,7 +591,7 @@ define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
 	private static function tab_payments( $s ) {
 		$icons = array(
 			'onsite' => 'dashicons-store',
-			'stripe' => 'dashicons-credit-card',
+			'stripe' => 'dashicons-bank',
 			'paypal' => 'dashicons-money',
 			'woo'    => 'dashicons-cart',
 		);
@@ -523,6 +620,11 @@ define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
 					<label class="osb-switch osb-switch--lg" title="<?php esc_attr_e( 'Enable', 'osam-bookings' ); ?>"><input type="hidden" name="<?php echo esc_attr( $id ); ?>_enabled" value="0"><input type="checkbox" class="osb-gateway__toggle" name="<?php echo esc_attr( $id ); ?>_enabled" value="1" <?php checked( $on ); ?> <?php disabled( 'woo' === $id && ! $gateway->is_configured() ); ?>><span></span></label>
 				</div>
 				<div class="osb-gateway__body">
+					<?php
+					if ( method_exists( $gateway, 'settings_panel' ) ) {
+						$gateway->settings_panel( $s );
+					}
+					?>
 					<div class="osb-fieldgrid">
 					<?php
 					foreach ( $gateway->settings_fields() as $key => $def ) {
@@ -727,7 +829,7 @@ define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
 			<p class="osb-tags__label"><?php esc_html_e( 'Blocks', 'osam-bookings' ); ?></p>
 			<div class="osb-tags">
 			<?php
-			foreach ( array( '{details_card}', '{manage_button}', '{admin_button}', '{review_button}', '{meeting_button}', '{waitlist_button}', '{status_badge}', '{schedule}', '{fields_table}', '{access_details}', '{book_again_button}', '{invoice_button}' ) as $tag ) {
+			foreach ( array( '{details_card}', '{manage_button}', '{admin_button}', '{review_button}', '{meeting_button}', '{waitlist_button}', '{status_badge}', '{schedule}', '{fields_table}', '{access_details}', '{book_again_button}', '{invoice_button}', '{pay_button}' ) as $tag ) {
 				echo '<button type="button" class="osb-tag osb-tag--block osb-copy" data-copy="' . esc_attr( $tag ) . '">' . esc_html( $tag ) . '</button>';
 			}
 			?>
@@ -735,7 +837,7 @@ define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
 			<p class="osb-tags__label"><?php esc_html_e( 'Values', 'osam-bookings' ); ?></p>
 			<div class="osb-tags">
 			<?php
-			$tags = array( '{customer_name}', '{customer_first_name}', '{customer_email}', '{customer_phone}', '{item_name}', '{staff_name}', '{staff_line}', '{location}', '{location_line}', '{date}', '{time}', '{end_time}', '{duration}', '{seats}', '{attendees}', '{amount}', '{discount}', '{payment_method}', '{payment_status}', '{status}', '{booking_id}', '{manage_url}', '{admin_url}', '{booking_url}', '{review_url}', '{meeting_link}', '{site_name}', '{site_url}', '{field:your_field_key}', '{intake_name}', '{session_count}', '{session_number}', '{session_date}', '{session_time}', '{session_end_time}', '{session_location}', '{session_note}', '{previous_when}', '{waitlist_expires}', '{covers}', '{tables}', '{noshow_fee}', '{resources}', '{booked_out}', '{hire}', '{access_code}', '{access_note}', '{invoice_number}', '{invoice_total}', '{invoice_date}', '{invoice_link}', '{credit_note_number}', '{credit_note_total}', '{credit_note_reason}' );
+			$tags = array( '{customer_name}', '{customer_first_name}', '{customer_email}', '{customer_phone}', '{item_name}', '{staff_name}', '{staff_line}', '{location}', '{location_line}', '{date}', '{time}', '{end_time}', '{duration}', '{seats}', '{attendees}', '{amount}', '{discount}', '{payment_method}', '{payment_status}', '{status}', '{booking_id}', '{manage_url}', '{admin_url}', '{booking_url}', '{review_url}', '{meeting_link}', '{site_name}', '{site_url}', '{field:your_field_key}', '{intake_name}', '{session_count}', '{session_number}', '{session_date}', '{session_time}', '{session_end_time}', '{session_location}', '{session_note}', '{previous_when}', '{waitlist_expires}', '{covers}', '{tables}', '{noshow_fee}', '{resources}', '{booked_out}', '{hire}', '{access_code}', '{access_note}', '{invoice_number}', '{invoice_total}', '{invoice_date}', '{invoice_link}', '{pay_link}', '{amount_due}', '{credit_note_number}', '{credit_note_total}', '{credit_note_reason}' );
 			foreach ( $tags as $tag ) {
 				echo '<button type="button" class="osb-tag osb-copy" data-copy="' . esc_attr( $tag ) . '">' . esc_html( $tag ) . '</button>';
 			}
@@ -1098,6 +1200,9 @@ define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
 				$v = array( 'licence_customer_message' => isset( $post['licence_customer_message'] ) ? sanitize_textarea_field( $post['licence_customer_message'] ) : '' );
 				if ( ! OSB_Licence::locked() ) {
 					$v['licence_url']     = esc_url_raw( trim( isset( $post['licence_url'] ) ? (string) $post['licence_url'] : '' ) );
+					if ( untrailingslashit( $v['licence_url'] ) === untrailingslashit( OSB_Licence::default_url() ) ) {
+						$v['licence_url'] = ''; // The default isn't stored, so it follows the connector address if that changes.
+					}
 					$v['licence_service'] = preg_replace( '/[^A-Za-z0-9_\-]/', '', $text( 'licence_service' ) );
 					$key                  = isset( $post['licence_key'] ) ? trim( (string) $post['licence_key'] ) : '';
 					if ( '••••••••' !== $key ) {
@@ -1147,6 +1252,9 @@ define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
 					$v[ $id . '_enabled' ] = $bool( $id . '_enabled' );
 					foreach ( $gateway->settings_fields() as $key => $def ) {
 						$v[ $key ] = 'select' === $def[1] ? ( isset( $def[2][ $text( $key ) ] ) ? $text( $key ) : key( $def[2] ) ) : trim( $text( $key ) );
+					}
+					if ( method_exists( $gateway, 'save_settings' ) ) {
+						$v = array_merge( $v, $gateway->save_settings( $post ) );
 					}
 				}
 				break;

@@ -650,7 +650,9 @@ class OSB_Invoices {
 		$wpdb->suppress_errors( true );
 		$got = $wpdb->get_var( "SELECT GET_LOCK('osb_invoice_number', 10)" );
 		$wpdb->suppress_errors( false );
-		return null === $got || '1' === (string) $got;
+		// MySQL answers 1 (got it), 0 (timed out) or NULL (error). Only a timeout stops numbering;
+		// databases without GET_LOCK (e.g. SQLite) answer something else and carry on unlocked.
+		return '0' !== (string) $got;
 	}
 
 	/**
@@ -998,6 +1000,50 @@ class OSB_Invoices {
 	}
 
 	/**
+	 * A booking was paid online after its emails had gone out (OSB_Bookings::mark_paid): send the invoice
+	 * on its own, if "email the invoice when a booking is marked paid later" is on.
+	 *
+	 * @param object $inv Invoice.
+	 */
+	public static function email_receipt( $inv ) {
+		self::maybe_email_later( $inv );
+	}
+
+	/**
+	 * What the customer can still pay online against an invoice. Invoices are issued for payments already
+	 * received, so this is whatever is left on the booking it belongs to (a deposit or part payment was
+	 * invoiced and the rest is still owed) — never more than that. Nothing for credit notes, credited
+	 * invoices, cancelled bookings, or when no online payment method is available.
+	 *
+	 * @param object $doc Invoice.
+	 * @return float
+	 */
+	public static function balance_due( $doc ) {
+		if ( ! $doc || 'invoice' !== $doc->kind || 'credited' === $doc->status || empty( $doc->booking_id ) || empty( $doc->id ) ) {
+			return 0.0;
+		}
+		$booking = OSB_DB::get( 'bookings', (int) $doc->booking_id );
+		$due     = $booking ? OSB_Payments::payable( $booking ) : 0.0;
+		if ( $due > 0 && empty( $doc->payment_id ) && empty( $doc->paid_at ) ) {
+			$due = min( $due, self::remaining( $doc ) ); // An invoice that is itself unpaid: at most its own total.
+		}
+		return (float) apply_filters( 'osb_invoice_balance_due', round( $due, 2 ), $doc, $booking );
+	}
+
+	/**
+	 * "Pay now" link for an invoice ('' when there is nothing to pay online).
+	 *
+	 * @param object $doc Invoice.
+	 * @return string
+	 */
+	public static function pay_url( $doc ) {
+		if ( self::balance_due( $doc ) <= 0 ) {
+			return '';
+		}
+		return OSB_Payments::pay_url( OSB_DB::get( 'bookings', (int) $doc->booking_id ) );
+	}
+
+	/**
 	 * Placeholders for one document.
 	 *
 	 * @param object $doc Document.
@@ -1021,6 +1067,12 @@ class OSB_Invoices {
 				'{credit_note_reason}' => esc_html( (string) $doc->notes ),
 			);
 			$map['{invoice_number}'] = esc_html( $parent ? $parent->number : '' );
+		}
+		if ( self::balance_due( $doc ) <= 0 ) {
+			// Nothing to pay against this document (always the case for credit notes): no "Pay now" in its email.
+			$map['{amount_due}'] = '';
+			$map['{pay_link}']   = '';
+			$map['{pay_button}'] = '';
 		}
 		return $map;
 	}
@@ -1419,7 +1471,13 @@ class OSB_Invoices {
 			$totals[] = array( __( 'Amount paid', 'osam-bookings' ), self::money( $doc->total, $cur ), false );
 			$totals[] = array( __( 'Balance due', 'osam-bookings' ), self::money( 0, $cur ), false );
 		}
-		if ( $y + count( $totals ) * 20 > OSB_Pdf::H - 110 ) {
+		// Money still owed on the booking that can be paid online: say so and add a "Pay now" button.
+		$due     = $credit ? 0 : self::balance_due( $doc );
+		$pay_url = $due > 0 ? self::pay_url( $doc ) : '';
+		if ( $pay_url ) {
+			$totals[] = array( __( 'Still to pay for this booking', 'osam-bookings' ), self::money( $due, $cur ), false );
+		}
+		if ( $y + count( $totals ) * 20 + ( $pay_url ? 80 : 0 ) > OSB_Pdf::H - 110 ) {
 			$pdf->add_page();
 			$y = 60;
 		}
@@ -1435,6 +1493,24 @@ class OSB_Invoices {
 				$pdf->text( $R - 10, $y + 9, $t[1], array( 'size' => 9.5, 'color' => $ink, 'align' => 'right' ) );
 				$y += 18;
 			}
+		}
+
+		if ( $pay_url ) {
+			// The button is a clickable area over a filled box; the address is printed too, for paper copies.
+			/* translators: 1: "Pay now" 2: amount */
+			$label = sprintf( __( '%1$s - %2$s', 'osam-bookings' ), __( 'Pay now', 'osam-bookings' ), self::money( $due, $cur ) );
+			$y    += 6;
+			$pdf->rect( $tx, $y, $R - $tx, 30, $accent );
+			$pdf->text( $tx + ( $R - $tx ) / 2, $y + 19.5, $label, array( 'size' => 11.5, 'bold' => true, 'color' => '#ffffff', 'align' => 'center' ) );
+			$pdf->link( $tx, $y, $R - $tx, 30, $pay_url );
+			$y += 44;
+			$pdf->text( $L, $y, __( 'Pay online:', 'osam-bookings' ), array( 'size' => 8, 'bold' => true, 'color' => $muted ) );
+			foreach ( OSB_Pdf::wrap( $pay_url, $R - $L, 8 ) as $line ) {
+				$y += 11;
+				$pdf->text( $L, $y, $line, array( 'size' => 8, 'color' => $muted ) );
+				$pdf->link( $L, $y - 8, OSB_Pdf::width( $line, 8 ), 11, $pay_url );
+			}
+			$y += 4;
 		}
 
 		// Notes and footer.

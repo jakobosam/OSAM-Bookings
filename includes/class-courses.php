@@ -661,6 +661,7 @@ class OSB_Courses {
 		$wpdb->delete( OSB_Install::table( 'course_sessions' ), array( 'intake_id' => (int) $intake_id ) );
 		OSB_DB::delete( 'course_intakes', $intake_id );
 		OSB_Availability::bust_cache();
+		do_action( 'osb_course_intake_deleted', (int) $intake_id );
 	}
 
 	/**

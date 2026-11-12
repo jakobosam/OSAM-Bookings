@@ -109,7 +109,15 @@ class OSB_Settings {
 			'stripe_mode'             => 'test',
 			'stripe_test_secret'      => '',
 			'stripe_live_secret'      => '',
-			'stripe_webhook_secret'   => '',
+			'stripe_webhook_secret'   => '', // Pasted by hand (before 2.17, or when automatic setup isn't possible).
+			'stripe_live_account'        => '',
+			'stripe_test_account'        => '',
+			'stripe_live_webhook_id'     => '',
+			'stripe_live_webhook_secret' => '',
+			'stripe_live_webhook_error'  => '',
+			'stripe_test_webhook_id'     => '',
+			'stripe_test_webhook_secret' => '',
+			'stripe_test_webhook_error'  => '',
 			'paypal_enabled'          => 0,
 			'paypal_title'            => __( 'PayPal', 'osam-bookings' ),
 			'paypal_mode'             => 'sandbox',
@@ -121,6 +129,7 @@ class OSB_Settings {
 
 			// Invoices.
 			'enable_invoices'         => 1,
+			'inv_pay_button'          => 1,
 			'inv_business_name'       => $site,
 			'inv_address'             => '',
 			'inv_email'               => $admin_email,
@@ -412,7 +421,7 @@ class OSB_Settings {
 			'customer_invoice' => array(
 				'enabled' => 1,
 				'subject' => 'Your invoice {invoice_number} from {site_name}',
-				'body'    => "<h1>Thanks for your payment, {customer_first_name}</h1>\n<p>Your invoice <strong>{invoice_number}</strong> for <strong>{invoice_total}</strong> is attached. It’s marked as paid, so there’s nothing more to do.</p>\n{details_card}\n{invoice_button}\n$foot",
+				'body'    => "<h1>Thanks for your payment, {customer_first_name}</h1>\n<p>Your invoice <strong>{invoice_number}</strong> for <strong>{invoice_total}</strong> is attached for your records.</p>\n{details_card}\n{pay_button}\n{invoice_button}\n$foot",
 			),
 			'customer_credit_note' => array(
 				'enabled' => 1,

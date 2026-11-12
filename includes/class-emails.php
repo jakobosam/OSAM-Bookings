@@ -159,6 +159,13 @@ class OSB_Emails {
 		foreach ( $fields as $key => $value ) {
 			$map[ '{field:' . $key . '}' ] = esc_html( is_scalar( $value ) ? (string) $value : '' );
 		}
+		// "Pay now": empty unless money is still owed and can be paid online.
+		$due     = OSB_Payments::payable( $booking );
+		$pay_url = $due > 0 ? OSB_Payments::pay_url( $booking ) : '';
+		$map['{amount_due}'] = $due > 0 ? esc_html( OSB_Settings::money( $due, $booking->currency ) ) : '';
+		$map['{pay_link}']   = esc_url( $pay_url );
+		/* translators: 1: "Pay now" 2: amount */
+		$map['{pay_button}'] = $pay_url ? self::button( $pay_url, sprintf( __( '%1$s — %2$s', 'osam-bookings' ), OSB_Payments::pay_label( $booking ), OSB_Settings::money( $due, $booking->currency ) ), $ds ) : '';
 		return apply_filters( 'osb_email_placeholders', $map, $booking );
 	}
 
@@ -319,9 +326,16 @@ class OSB_Emails {
 		if ( 'course' === $booking->type && 0 === strpos( $key, 'customer_' ) && false === strpos( $body, '{schedule}' ) && 'customer_session_reminder' !== $key ) {
 			$body .= "\n{schedule}";
 		}
+		// The invoice email always offers "Pay now" when something is still owed, even on templates
+		// saved before the button existed.
+		$invoice_email = 'customer_invoice' === $key || ( 0 === strpos( (string) $key, 'custom_' ) && 'customer_invoice' === self::$replacing );
+		if ( $invoice_email && ! empty( $map['{pay_button}'] ) && false === strpos( $body, '{pay_button}' ) && false === strpos( $body, '{pay_link}' ) ) {
+			$at   = strpos( $body, '{invoice_button}' );
+			$body = false === $at ? $body . "\n{pay_button}" : substr_replace( $body, "{pay_button}\n", $at, 0 );
+		}
 		$subject = wp_specialchars_decode( strtr( (string) $tpl['subject'], $map ), ENT_QUOTES );
 		// Block-level placeholders must not end up wrapped in a paragraph: give each its own line first.
-		$blocks = 'schedule|fields_table|details_card|manage_button|admin_button|review_button|meeting_button|waitlist_button|invoice_button';
+		$blocks = 'schedule|fields_table|details_card|manage_button|admin_button|review_button|meeting_button|waitlist_button|invoice_button|pay_button';
 		$body   = preg_replace( '#\{(' . $blocks . ')\}#', "\n\n{\$1}\n\n", $body );
 		$body   = preg_replace( '#<p>\s*(\{(?:' . $blocks . ')\})\s*(?:<br\s*/?>)?\s*</p>#', '$1', wpautop( $body ) );
 		$body = strtr( $body, $map );

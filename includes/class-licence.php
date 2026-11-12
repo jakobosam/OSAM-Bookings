@@ -74,9 +74,18 @@ class OSB_Licence {
 			$url = trim( (string) OSB_Settings::get( 'licence_url' ) );
 		}
 		if ( '' === $url ) {
-			$url = OSB_Updater::connector() . '/wp-json/osam-connect/v1/licence';
+			$url = self::default_url();
 		}
 		return esc_url_raw( (string) apply_filters( 'osb_licence_url', $url ) );
+	}
+
+	/**
+	 * The status address used unless another one is set: the OSAM Connector.
+	 *
+	 * @return string
+	 */
+	public static function default_url() {
+		return OSB_Updater::connector() . '/wp-json/osam-connect/v1/licence';
 	}
 
 	/**

@@ -58,21 +58,62 @@ class OSB_Admin {
 			$order = array_merge( $order, $g['items'] );
 		}
 		$order = array_unique( array_merge( $order, array_keys( $sections ) ) );
+
+		// The WordPress sidebar shows one link per area (plus the calendar); the rest of each area
+		// is in the tabs at the top of every plugin screen. Every screen stays registered so its
+		// address still works.
+		$labels = array();
+		$parent = array();
+		foreach ( self::groups() as $g ) {
+			$lead = '';
+			foreach ( $g['items'] as $slug ) {
+				if ( ! isset( $sections[ $slug ] ) || ! current_user_can( $sections[ $slug ]['cap'] ) ) {
+					continue;
+				}
+				if ( '' === $lead ) {
+					$lead            = $slug;
+					$labels[ $slug ] = $g['title'];
+				} elseif ( 'osb-calendar' !== $slug ) {
+					$parent[ $slug ] = $lead;
+				}
+			}
+		}
 		foreach ( $order as $slug ) {
 			if ( isset( $sections[ $slug ] ) ) {
 				$section = $sections[ $slug ];
-				add_submenu_page( 'osb-dashboard', $section['title'], $section['menu'], $section['cap'], $slug, $section['callback'] );
+				add_submenu_page( 'osb-dashboard', $section['title'], isset( $labels[ $slug ] ) ? $labels[ $slug ] : $section['menu'], $section['cap'], $slug, $section['callback'] );
 			}
 		}
-		// Import screen: reachable from the Services / Events / Courses pages, not listed in the menu.
-		add_submenu_page( 'osb-dashboard', __( 'Import', 'osam-bookings' ), __( 'Import', 'osam-bookings' ), self::CAP, 'osb-import', array( 'OSB_Admin_Import', 'page' ) );
+		self::$tucked = $parent;
 		add_action(
 			'admin_head',
 			static function () {
-				echo '<style>#adminmenu a[href="admin.php?page=osb-import"]{display:none}</style>';
+				if ( ! self::$tucked ) {
+					return;
+				}
+				$sel = array();
+				foreach ( array_keys( self::$tucked ) as $slug ) {
+					$sel[] = '#adminmenu a[href="admin.php?page=' . $slug . '"]';
+				}
+				echo '<style>' . implode( ',', $sel ) . '{display:none}</style>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- fixed slugs.
+			}
+		);
+		// Keep the right sidebar link lit while on a screen that isn't listed there.
+		add_filter(
+			'submenu_file',
+			static function ( $file ) {
+				$page = self::current_section();
+				return isset( self::$tucked[ $page ] ) ? self::$tucked[ $page ] : $file;
 			}
 		);
 	}
+
+	/**
+	 * Screens left out of the WordPress sidebar: slug => the sidebar link that stands for them.
+	 *
+	 * @var array
+	 */
+	private static $tucked = array();
 
 	/**
 	 * Plugin sections, used for both the WP menu and the in-page navigation.
@@ -145,8 +186,8 @@ class OSB_Admin {
 				'callback' => array( 'OSB_Admin_Resources', 'schedule_page' ),
 			),
 			'osb-restaurant' => array(
-				'title'    => __( 'Service', 'osam-bookings' ),
-				'menu'     => __( 'Service', 'osam-bookings' ),
+				'title'    => __( 'Live service', 'osam-bookings' ),
+				'menu'     => __( 'Live service', 'osam-bookings' ),
 				'icon'     => 'dashicons-food',
 				'cap'      => self::CAP,
 				'callback' => array( 'OSB_Admin_Restaurant', 'service_page' ),
@@ -235,6 +276,13 @@ class OSB_Admin {
 				'cap'      => 'manage_options',
 				'callback' => array( 'OSB_Admin_Settings', 'page' ),
 			),
+			'osb-import'     => array(
+				'title'    => __( 'Import', 'osam-bookings' ),
+				'menu'     => __( 'Import', 'osam-bookings' ),
+				'icon'     => 'dashicons-upload',
+				'cap'      => self::CAP,
+				'callback' => array( 'OSB_Admin_Import', 'page' ),
+			),
 		);
 		// Parts that are switched off in Settings → Features disappear from the menus.
 		$gated = array(
@@ -284,7 +332,7 @@ class OSB_Admin {
 			'invoices'  => array( 'title' => __( 'Invoices', 'osam-bookings' ), 'icon' => 'dashicons-media-spreadsheet', 'items' => array( 'osb-invoices' ) ),
 			'offer'     => array( 'title' => $extras ? __( 'Services & events', 'osam-bookings' ) : __( 'Services', 'osam-bookings' ), 'icon' => 'dashicons-clipboard', 'items' => array( 'osb-services', 'osb-events', 'osb-courses', 'osb-addons' ) ),
 			'team'      => array( 'title' => $solo ? __( 'Working hours', 'osam-bookings' ) : __( 'Staff & hours', 'osam-bookings' ), 'icon' => 'dashicons-groups', 'items' => array( 'osb-staff' ) ),
-			'settings'  => array( 'title' => __( 'Settings', 'osam-bookings' ), 'icon' => 'dashicons-admin-generic', 'items' => array( 'osb-settings', 'osb-emails', 'osb-shortcodes' ) ),
+			'settings'  => array( 'title' => __( 'Settings', 'osam-bookings' ), 'icon' => 'dashicons-admin-generic', 'items' => array( 'osb-settings', 'osb-emails', 'osb-shortcodes', 'osb-import' ) ),
 		);
 	}
 
@@ -319,8 +367,8 @@ class OSB_Admin {
 	 * @return string
 	 */
 	public static function group_of( $slug ) {
-		if ( 'osb-import' === $slug ) {
-			return 'offer';
+		if ( 'osb-import' === $slug && isset( $_GET['type'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return 'offer'; // Opened from the Services / Events / Courses screens.
 		}
 		foreach ( self::groups() as $key => $g ) {
 			if ( in_array( $slug, $g['items'], true ) ) {
@@ -614,7 +662,10 @@ class OSB_Admin {
 			'cal_disconnected' => __( 'Calendar disconnected.', 'osam-bookings' ),
 			'erased'           => __( 'The customer’s personal data has been erased.', 'osam-bookings' ),
 			'erased_partly'    => __( 'Past bookings were erased. Upcoming bookings were kept — cancel them and erase again to finish.', 'osam-bookings' ),
-			'zoom_ok'          => __( 'Zoom is connected and working.', 'osam-bookings' ),
+			'zoom_ok'          => __( 'Zoom is working: a test meeting was created, moved and deleted.', 'osam-bookings' ),
+			'stripe_ok'        => __( 'Stripe is connected and working, and payment confirmations are set up.', 'osam-bookings' ),
+			'stripe_ok_nohook' => __( 'Stripe accepted the key. Payment confirmations couldn’t be set up — see the note under Stripe.', 'osam-bookings' ),
+			'stripe_off'       => __( 'Stripe disconnected.', 'osam-bookings' ),
 			'ce_copied'        => __( 'Copied. The copy is switched off until you switch it on.', 'osam-bookings' ),
 			'update_found'     => __( 'A new version is available — see the Updates card below, or Dashboard → Updates.', 'osam-bookings' ),
 			'licence_checked'  => __( 'Subscription status checked.', 'osam-bookings' ),

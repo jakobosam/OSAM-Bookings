@@ -329,10 +329,10 @@ class OSB_Admin_Bookings {
 				</div>
 
 				<?php
-				$meet_errors = OSB_Settings::feature( 'meetings' ) && ! $b->meeting_url ? OSB_Meetings::errors( $b->id ) : array();
+				$meet_errors = OSB_Settings::feature( 'meetings' ) ? OSB_Meetings::errors( $b->id ) : array();
 				if ( $meet_errors ) :
 					?>
-					<div class="osb-alert osb-alert--warn"><span class="dashicons dashicons-video-alt2"></span><div><strong><?php esc_html_e( 'No online meeting link', 'osam-bookings' ); ?></strong><p><?php echo esc_html( $meet_errors[0]['message'] ); ?></p></div></div>
+					<div class="osb-alert osb-alert--warn"><span class="dashicons dashicons-video-alt2"></span><div><strong><?php echo $b->meeting_url ? esc_html__( 'The online meeting may be out of date', 'osam-bookings' ) : esc_html__( 'No online meeting link', 'osam-bookings' ); ?></strong><p><?php echo esc_html( $meet_errors[0]['message'] ); ?></p></div></div>
 				<?php endif; ?>
 
 				<div class="osb-card">
@@ -988,6 +988,11 @@ class OSB_Admin_Bookings {
 		$id = isset( $_GET['id'] ) ? absint( $_GET['id'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		OSB_Admin::verify( 'osb_delete_booking_' . $id );
 		global $wpdb;
+		$row = OSB_DB::get( 'bookings', $id );
+		if ( $row ) {
+			// While the row still exists, so its Zoom meeting can be removed too.
+			do_action( 'osb_booking_before_delete', $row );
+		}
 		OSB_DB::delete( 'bookings', $id );
 		$wpdb->delete( OSB_Install::table( 'payments' ), array( 'booking_id' => $id ) );
 		OSB_Availability::bust_cache();
