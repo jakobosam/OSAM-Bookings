@@ -358,8 +358,8 @@ class OSB_Admin_Settings {
 					<p class="description"><?php esc_html_e( 'Optional. Sent with each check to help billing find the right service.', 'osam-bookings' ); ?></p>
 				</td></tr>
 				<tr><th scope="row"><label for="osb_lu"><?php esc_html_e( 'Status address', 'osam-bookings' ); ?></label></th><td>
-					<?php if ( $locked && defined( 'OSB_LICENCE_URL' ) ) : ?><code><?php echo esc_html( OSB_Licence::url() ); ?></code><?php else : ?><input type="url" id="osb_lu" name="licence_url" class="large-text" value="<?php echo esc_attr( '' !== trim( (string) $s['licence_url'] ) ? $s['licence_url'] : OSB_Licence::default_url() ); ?>" placeholder="<?php echo esc_attr( OSB_Licence::default_url() ); ?>"><?php endif; ?>
-					<p class="description"><?php esc_html_e( 'Where this site asks for its status, hourly (every 10 minutes while overdue or suspended). Already set to the OSAM Connector — only change it if OSAM asks you to.', 'osam-bookings' ); ?></p>
+					<code id="osb_lu"><?php echo esc_html( OSB_Licence::url() ); ?></code>
+					<p class="description"><?php echo OSB_Licence::url_overridden() ? esc_html__( 'Set by OSB_LICENCE_URL in wp-config.php (for testing). Remove it to use OSAM’s billing again.', 'osam-bookings' ) : esc_html__( 'OSAM’s billing. This site asks it for its status hourly (every 10 minutes while overdue or suspended). It’s fixed and can’t be changed here.', 'osam-bookings' ); ?></p>
 				</td></tr>
 				<tr><th scope="row"><?php esc_html_e( 'Webhook for billing', 'osam-bookings' ); ?></th><td>
 					<code><?php echo esc_html( OSB_Licence::webhook_url() ); ?></code> <button type="button" class="osb-iconbtn osb-copy" data-copy="<?php echo esc_attr( OSB_Licence::webhook_url() ); ?>" title="<?php esc_attr_e( 'Copy', 'osam-bookings' ); ?>"><span class="dashicons dashicons-admin-page"></span></button>
@@ -368,8 +368,7 @@ class OSB_Admin_Settings {
 			</table>
 			<details class="osb-advanced"><summary><?php esc_html_e( 'Lock these settings in wp-config.php', 'osam-bookings' ); ?></summary>
 				<pre class="osb-code"><code>define( 'OSB_LICENCE_KEY', '<?php esc_html_e( 'the-key-from-OSAM', 'osam-bookings' ); ?>' );
-define( 'OSB_LICENCE_SERVICE', '<?php echo esc_html( $s['licence_service'] ? $s['licence_service'] : '123' ); ?>' );          // optional
-define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
+define( 'OSB_LICENCE_SERVICE', '<?php echo esc_html( $s['licence_service'] ? $s['licence_service'] : '123' ); ?>' );          // optional</code></pre>
 			</details>
 			</details>
 		</div>
@@ -1199,10 +1198,7 @@ define( 'OSB_LICENCE_URL', 'https://…' );       // optional</code></pre>
 			case 'subscription':
 				$v = array( 'licence_customer_message' => isset( $post['licence_customer_message'] ) ? sanitize_textarea_field( $post['licence_customer_message'] ) : '' );
 				if ( ! OSB_Licence::locked() ) {
-					$v['licence_url']     = esc_url_raw( trim( isset( $post['licence_url'] ) ? (string) $post['licence_url'] : '' ) );
-					if ( untrailingslashit( $v['licence_url'] ) === untrailingslashit( OSB_Licence::default_url() ) ) {
-						$v['licence_url'] = ''; // The default isn't stored, so it follows the connector address if that changes.
-					}
+					$v['licence_url']     = ''; // No longer settable; the status address is fixed (see OSB_Licence::url()).
 					$v['licence_service'] = preg_replace( '/[^A-Za-z0-9_\-]/', '', $text( 'licence_service' ) );
 					$key                  = isset( $post['licence_key'] ) ? trim( (string) $post['licence_key'] ) : '';
 					if ( '••••••••' !== $key ) {

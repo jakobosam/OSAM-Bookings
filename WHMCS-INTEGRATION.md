@@ -20,7 +20,7 @@ Each client site needs:
 | **Subscription key**: a random secret of at least 32 characters, unique to the site | Product custom field, e.g. `Booking key` (admin-only) | `define( 'OSB_LICENCE_KEY', '…' );` in wp-config.php (recommended), or Bookings → Settings → Subscription |
 | **Site URL**, e.g. `https://client.co.uk/` | The service's **Domain** field | Detected automatically (`home_url('/')`) |
 | **Service ID** (optional) | The WHMCS service ID | `define( 'OSB_LICENCE_SERVICE', '1042' );` or the settings field |
-| **Status URL** (pull) | Wherever the endpoint below is hosted | `define( 'OSB_LICENCE_URL', 'https://…' );` or the settings field. If left empty, the default is `https://connect.osamweb.com/wp-json/osam-connect/v1/licence` |
+| **Status URL** (pull) | The `osam_client_bookings` addon: `https://osamweb.com/portal/modules/addons/osam_client_bookings/status.php` | Fixed in the plugin (from 2.17.0) and shown read-only under Settings → OSAM subscription. Only `define( 'OSB_LICENCE_URL', 'https://…' );` in wp-config.php can point a site elsewhere, for testing |
 
 Generate a key with, for example, `bin2hex(random_bytes(24))`.
 
@@ -106,7 +106,7 @@ X-OSB-Signature: hex(HMAC-SHA256(key, "1798451201." + body))
 
 If `site` is included, it must match the site exactly (a trailing slash doesn't matter), or the site ignores the answer. Unsigned answers are always ignored.
 
-The endpoint can live on the OSAM Connector (connect.osamweb.com, which then asks WHMCS using `localAPI` / the API) or as a small script on the WHMCS server. **The default URL path on the Connector, `/wp-json/osam-connect/v1/licence`, doesn't exist until someone builds it.** Until then, either build it there or set `OSB_LICENCE_URL` on each site to wherever the endpoint is.
+The endpoint is the `status.php` script of the `osam_client_bookings` WHMCS addon, at `https://osamweb.com/portal/modules/addons/osam_client_bookings/status.php`. Every site asks there; it isn't a dashboard setting.
 
 Example core of the endpoint (PHP; adapt it):
 
@@ -178,7 +178,7 @@ Note: `AfterModule*` hooks only fire for products that use a server/provisioning
 
 ## 6. Testing
 
-1. On a test site, set a key and point `OSB_LICENCE_URL` at the endpoint.
+1. On a test site, set a key (and only if testing a different endpoint, point `OSB_LICENCE_URL` at it in wp-config.php).
 2. Under Bookings → Settings → Subscription, click **Check now**. Status, last checked and any error are shown there.
 3. Push `{"status":"suspended"}`. The booking page should show the "unavailable" message.
 4. Push `{"status":"active"}`. The booking form should come back.

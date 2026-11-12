@@ -17,7 +17,7 @@
  *
  * Lock the settings with constants in wp-config.php so they can't be changed from the dashboard:
  *   define( 'OSB_LICENCE_KEY', '…' );           // required to switch this on
- *   define( 'OSB_LICENCE_URL', 'https://…' );   // optional, defaults to the OSAM Connector
+ *   define( 'OSB_LICENCE_URL', 'https://…' );   // OSAM testing only; normally always the WHMCS addon (DEFAULT_URL)
  *   define( 'OSB_LICENCE_SERVICE', '123' );     // optional WHMCS service id
  *
  * See WHMCS-INTEGRATION.md for the exact requests and responses.
@@ -68,24 +68,33 @@ class OSB_Licence {
 	 * @return string
 	 */
 	public static function url() {
-		if ( defined( 'OSB_LICENCE_URL' ) && OSB_LICENCE_URL ) {
-			$url = (string) OSB_LICENCE_URL;
-		} else {
-			$url = trim( (string) OSB_Settings::get( 'licence_url' ) );
-		}
-		if ( '' === $url ) {
-			$url = self::default_url();
-		}
+		// Always OSAM's billing. Only OSB_LICENCE_URL in wp-config.php can point elsewhere (for OSAM's own
+		// testing); the old dashboard setting is ignored so a site can't be pointed away from billing.
+		$url = defined( 'OSB_LICENCE_URL' ) && OSB_LICENCE_URL ? (string) OSB_LICENCE_URL : self::DEFAULT_URL;
 		return esc_url_raw( (string) apply_filters( 'osb_licence_url', $url ) );
 	}
 
 	/**
-	 * The status address used unless another one is set: the OSAM Connector.
+	 * OSAM's billing status address (WHMCS addon).
+	 */
+	const DEFAULT_URL = 'https://osamweb.com/portal/modules/addons/osam_client_bookings/status.php';
+
+	/**
+	 * The status address used unless wp-config.php says otherwise.
 	 *
 	 * @return string
 	 */
 	public static function default_url() {
-		return OSB_Updater::connector() . '/wp-json/osam-connect/v1/licence';
+		return self::DEFAULT_URL;
+	}
+
+	/**
+	 * Is the status address overridden in wp-config.php?
+	 *
+	 * @return bool
+	 */
+	public static function url_overridden() {
+		return defined( 'OSB_LICENCE_URL' ) && OSB_LICENCE_URL;
 	}
 
 	/**
