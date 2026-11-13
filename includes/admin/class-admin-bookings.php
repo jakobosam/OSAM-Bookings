@@ -502,6 +502,11 @@ class OSB_Admin_Bookings {
 					if ( 'course' !== $b->type ) {
 						unset( $labels['customer_session_reminder'], $labels['customer_schedule_changed'] );
 					}
+					foreach ( array_keys( $labels ) as $lk ) {
+						if ( ! OSB_Settings::email_available( $lk ) ) {
+							unset( $labels[ $lk ] ); // Belongs to a part of the plugin that's switched off.
+						}
+					}
 					?>
 					<?php $customs = OSB_Custom_Emails::all(); ?>
 					<div class="osb-inline">

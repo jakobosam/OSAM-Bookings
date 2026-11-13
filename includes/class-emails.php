@@ -185,6 +185,11 @@ class OSB_Emails {
 		if ( ! $tpl || ( empty( $tpl['enabled'] ) && ! $force ) || empty( $to ) ) {
 			return false;
 		}
+		// Emails for a part of the plugin that's switched off (e.g. course reminders with Courses off) aren't
+		// sent automatically. Sending one by hand from a booking still works.
+		if ( ! $force && ! OSB_Settings::email_available( $key ) ) {
+			return false;
+		}
 		if ( ! apply_filters( 'osb_send_email', true, $key, $booking, $to ) ) {
 			return false;
 		}

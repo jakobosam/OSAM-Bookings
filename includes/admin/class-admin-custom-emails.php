@@ -121,6 +121,8 @@ class OSB_Admin_Custom_Emails {
 			'customer_session_reminder' => __( 'Before each course session', 'osam-bookings' ),
 			'customer_schedule_changed' => __( 'A course’s dates change', 'osam-bookings' ),
 			'customer_waitlist_offer'   => __( 'A place opens up for someone on the waiting list', 'osam-bookings' ),
+			'customer_invoice'          => __( 'You email an invoice, or a booking is paid later (if that’s switched on)', 'osam-bookings' ),
+			'customer_credit_note'      => __( 'A refund creates a credit note', 'osam-bookings' ),
 			'admin_new'                 => __( 'Any new booking', 'osam-bookings' ),
 			'admin_rescheduled'         => __( 'A customer moves their booking', 'osam-bookings' ),
 			'admin_cancelled'           => __( 'A booking is cancelled', 'osam-bookings' ),
@@ -165,13 +167,25 @@ class OSB_Admin_Custom_Emails {
 				),
 			)
 		);
-		foreach ( OSB_Settings::email_groups() as $group => $keys ) :
+		$hidden = array();
+		foreach ( OSB_Settings::email_sections() as $section ) :
+			$keys = array_values( array_filter( $section['keys'], static function ( $k ) use ( $labels ) { return isset( $labels[ $k ] ); } ) );
+			if ( ! $section['on'] ) {
+				if ( $keys ) {
+					$hidden[] = $section;
+				}
+				continue;
+			}
+			if ( ! $keys ) {
+				continue;
+			}
 			?>
-			<h3 class="osb-grouptitle"><?php echo esc_html( $group ); ?></h3>
+			<h3 class="osb-grouptitle"><?php echo esc_html( $section['title'] ); ?><?php if ( $section['desc'] ) : ?> <small class="osb-grouptitle__desc"><?php echo esc_html( $section['desc'] ); ?></small><?php endif; ?></h3>
 			<div class="osb-card osb-card--table">
 				<table class="osb-table osb-table--click osb-table--emails">
 					<thead><tr>
 						<th><?php esc_html_e( 'Email', 'osam-bookings' ); ?></th>
+						<th><?php esc_html_e( 'To', 'osam-bookings' ); ?></th>
 						<th><?php esc_html_e( 'Sent when', 'osam-bookings' ); ?></th>
 						<th><?php esc_html_e( 'Status', 'osam-bookings' ); ?></th>
 						<th class="osb-col-actions"></th>
@@ -186,6 +200,7 @@ class OSB_Admin_Custom_Emails {
 						?>
 						<tr>
 							<td><a class="osb-rowlink" href="<?php echo esc_url( $edit ); ?>"><strong><?php echo esc_html( function_exists( 'mb_strtoupper' ) ? mb_strtoupper( mb_substr( $name, 0, 1 ) ) . mb_substr( $name, 1 ) : ucfirst( $name ) ); ?></strong></a><small><?php echo esc_html( $tpl['subject'] ); ?></small></td>
+							<td><?php echo esc_html( OSB_Settings::email_recipient( $key ) ); ?></td>
 							<td><?php echo esc_html( $when[ $key ] ?? '' ); ?><?php echo isset( $replaced[ $key ] ) ? '<small>' . esc_html__( 'Some bookings get one of your own emails instead', 'osam-bookings' ) . '</small>' : ''; ?></td>
 							<td><a href="<?php echo esc_url( $tog ); ?>" title="<?php echo esc_attr( empty( $tpl['enabled'] ) ? __( 'Click to switch on', 'osam-bookings' ) : __( 'Click to switch off', 'osam-bookings' ) ); ?>"><?php echo empty( $tpl['enabled'] ) ? '<span class="osb-pill osb-pill--neutral">' . esc_html__( 'Off', 'osam-bookings' ) . '</span>' : '<span class="osb-pill osb-pill--confirmed">' . esc_html__( 'On', 'osam-bookings' ) . '</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></a></td>
 							<td class="osb-col-actions">
@@ -199,6 +214,21 @@ class OSB_Admin_Custom_Emails {
 			</div>
 			<?php
 		endforeach;
+		if ( $hidden ) :
+			?>
+			<p class="osb-help osb-emails-hidden"><span class="dashicons dashicons-hidden" aria-hidden="true"></span>
+				<?php
+				$names = array();
+				foreach ( $hidden as $h ) {
+					$names[] = $h['title'] . ( $h['off_hint'] ? ' (' . $h['off_hint'] . ')' : '' );
+				}
+				/* translators: %s list of sections */
+				echo esc_html( sprintf( __( 'Hidden and not sent because that part is switched off: %s.', 'osam-bookings' ), implode( '; ', $names ) ) );
+				?>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=osb-settings&tab=features' ) ); ?>"><?php esc_html_e( 'Features on/off', 'osam-bookings' ); ?> →</a>
+			</p>
+			<?php
+		endif;
 		?>
 		<h3 class="osb-grouptitle"><?php esc_html_e( 'Your own emails', 'osam-bookings' ); ?></h3>
 		<?php if ( ! $all ) : ?>

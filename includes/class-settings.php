@@ -493,34 +493,105 @@ class OSB_Settings {
 	}
 
 	/**
-	 * Email templates grouped by recipient, leaving out ones for switched-off features.
+	 * Standard emails grouped by the part of the plugin they belong to, in display order.
+	 * Emails in a section whose feature is off are hidden and never sent.
 	 *
-	 * @return array group label => keys
+	 * @return array section id => [ title, description, on (bool), keys[], off_hint ]
+	 */
+	public static function email_sections() {
+		$team = ! OSB_DB::is_solo();
+		$core = array( 'customer_pending', 'customer_confirmed', 'customer_rescheduled', 'customer_cancelled', 'customer_reminder', 'admin_new', 'admin_cancelled' );
+		if ( $team ) {
+			array_push( $core, 'staff_new', 'staff_cancelled' );
+		}
+		$sections = array(
+			'booking'    => array( __( 'Every booking', 'osam-bookings' ), __( 'Sent for every kind of booking.', 'osam-bookings' ), true, $core, '' ),
+			'payments'   => array( __( 'Online payments', 'osam-bookings' ), __( 'Only used while Stripe, PayPal or WooCommerce is switched on.', 'osam-bookings' ), self::online_payments_on(), array( 'customer_payment_failed', 'admin_payment_failed' ), __( 'Switch on an online payment method in Settings → Payments.', 'osam-bookings' ) ),
+			'reschedule' => array( __( 'Customer rescheduling', 'osam-bookings' ), __( 'When customers move their own booking.', 'osam-bookings' ), self::feature( 'reschedule' ), array( 'admin_rescheduled' ), '' ),
+			'followup'   => array( __( 'After the visit', 'osam-bookings' ), __( 'A thank-you with an optional review link. Switching this email on or off also switches the feature.', 'osam-bookings' ), true, array( 'customer_followup' ), '' ),
+			'portal'     => array( __( 'My bookings sign-in', 'osam-bookings' ), __( 'For customers signing in to see their bookings.', 'osam-bookings' ), true, array( 'customer_login' ), '' ),
+			'invoices'   => array( __( 'Invoices', 'osam-bookings' ), '', self::feature( 'invoices' ), array( 'customer_invoice', 'customer_credit_note' ), '' ),
+			'courses'    => array( __( 'Courses', 'osam-bookings' ), '', self::feature( 'courses' ), array( 'customer_session_reminder', 'customer_schedule_changed' ), '' ),
+			'waitlist'   => array( __( 'Waitlist', 'osam-bookings' ), '', self::feature( 'waitlist' ), array( 'customer_waitlist_offer' ), __( 'Needs Waitlist and Events or Courses switched on.', 'osam-bookings' ) ),
+			'resources'  => array( __( 'Resources', 'osam-bookings' ), '', self::feature( 'resources' ), array( 'customer_access_code' ), '' ),
+			'bundles'    => array( __( 'Bundles', 'osam-bookings' ), '', self::feature( 'bundles' ), array( 'customer_bundle' ), '' ),
+		);
+		$out = array();
+		foreach ( $sections as $id => $s ) {
+			$out[ $id ] = array(
+				'title'    => $s[0],
+				'desc'     => $s[1],
+				'on'       => (bool) $s[2],
+				'keys'     => $s[3],
+				'off_hint' => $s[4],
+			);
+		}
+		return apply_filters( 'osb_email_sections', $out );
+	}
+
+	/**
+	 * Is an online payment method (one customers pay through) switched on?
+	 *
+	 * @return bool
+	 */
+	public static function online_payments_on() {
+		if ( ! function_exists( 'osb' ) || ! osb() || empty( osb()->payments ) ) {
+			return true; // Too early to tell: don't hide anything.
+		}
+		foreach ( osb()->payments->enabled() as $gateway ) {
+			if ( 'pending_payment' === $gateway->initial_status() ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Does this standard email belong to a part of the plugin that's switched on?
+	 * Emails that aren't in any section (e.g. added by another plugin) count as available.
+	 *
+	 * @param string $key Template key.
+	 * @return bool
+	 */
+	public static function email_available( $key ) {
+		if ( in_array( $key, array( 'staff_new', 'staff_cancelled' ), true ) && OSB_DB::is_solo() ) {
+			return false;
+		}
+		foreach ( self::email_sections() as $s ) {
+			if ( in_array( $key, $s['keys'], true ) ) {
+				return $s['on'];
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Who an email goes to, from its key.
+	 *
+	 * @param string $key Template key.
+	 * @return string
+	 */
+	public static function email_recipient( $key ) {
+		if ( 0 === strpos( $key, 'admin_' ) ) {
+			return __( 'You', 'osam-bookings' );
+		}
+		if ( 0 === strpos( $key, 'staff_' ) ) {
+			return __( 'Staff member', 'osam-bookings' );
+		}
+		return __( 'Customer', 'osam-bookings' );
+	}
+
+	/**
+	 * Email templates in their sections, leaving out sections for switched-off features.
+	 *
+	 * @return array section title => keys
 	 */
 	public static function email_groups() {
-		$customer = array( 'customer_pending', 'customer_confirmed', 'customer_payment_failed', 'customer_rescheduled', 'customer_cancelled', 'customer_reminder', 'customer_followup' );
-		if ( self::feature( 'resources' ) ) {
-			$customer[] = 'customer_access_code';
-		}
-		if ( self::feature( 'bundles' ) ) {
-			$customer[] = 'customer_bundle';
-		}
-		$customer[] = 'customer_login';
-		if ( self::feature( 'invoices' ) ) {
-			array_push( $customer, 'customer_invoice', 'customer_credit_note' );
-		}
-		if ( self::feature( 'courses' ) ) {
-			array_push( $customer, 'customer_session_reminder', 'customer_schedule_changed' );
-		}
-		if ( self::feature( 'events' ) || self::feature( 'courses' ) ) {
-			$customer[] = 'customer_waitlist_offer';
-		}
-		$groups = array(
-			__( 'To the customer', 'osam-bookings' ) => $customer,
-			__( 'To you (admin)', 'osam-bookings' )  => array( 'admin_new', 'admin_rescheduled', 'admin_cancelled', 'admin_payment_failed' ),
-		);
-		if ( ! OSB_DB::is_solo() ) {
-			$groups[ __( 'To the staff member', 'osam-bookings' ) ] = array( 'staff_new', 'staff_cancelled' );
+		$groups = array();
+		foreach ( self::email_sections() as $s ) {
+			if ( $s['on'] && $s['keys'] ) {
+				$groups[ $s['title'] ] = $s['keys'];
+			}
 		}
 		return $groups;
 	}

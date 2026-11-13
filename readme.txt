@@ -176,6 +176,11 @@ Every email sent about a booking (standard and custom) is listed under "Emails s
 
 == Changelog ==
 
+= 2.17.0-beta.3 =
+* Emails are now grouped by the part of the plugin they belong to: Every booking, Online payments, Customer rescheduling, After the visit, My bookings sign-in, Invoices, Courses, Waitlist, Resources and Bundles, with a "To" column showing who gets each one.
+* Emails for a part that's switched off (for example course reminders while Courses is off, or payment-failed emails with no online payment method) are hidden and aren't sent. A note on the Emails page lists what's hidden and why. Their wording and on/off setting are kept, so switching the feature back on brings them back as they were. You can still send one by hand from a booking.
+* The invoice and credit note emails now say when they're sent.
+
 = 2.17.0-beta.2 =
 * OSAM subscription: the status address is now always OSAM's billing (https://osamweb.com/portal/modules/addons/osam_client_bookings/status.php). It's shown on the Subscription tab but can't be changed there; an address saved on a site before is no longer used.
 
