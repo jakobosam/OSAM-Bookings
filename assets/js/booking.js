@@ -1972,6 +1972,10 @@
 			this.accessHtml(d) + this.seriesHtml(d) + this.bundleCodeHtml(d) +
 			(s.skipped && s.skipped.length && s.outcome !== 'view' ? '<p class="osb-alert osb-alert--info">' + esc((T.skippedNote || '%s').replace('%s', s.skipped.join(', '))) + '</p>' : '') +
 			'<div class="osb-actions osb-actions--center">';
+		// Money still owed that can be paid online (not while a payment just made is being confirmed).
+		if (d.pay_url && s.outcome !== 'pending') {
+			html += '<a class="osb-btn osb-btn--primary osb-btn--pay" href="' + esc(d.pay_url) + '">' + esc(d.pay_label + ' — ' + d.amount_due) + '</a>';
+		}
 		(d.invoices || []).forEach(function (inv) {
 			html += '<a class="osb-btn osb-btn--ghost osb-btn--invoice" href="' + esc(inv.url) + '" target="_blank" rel="noopener">' + esc(T.downloadInvoice ? T.downloadInvoice.replace('%s', inv.label) : inv.label) + '</a>';
 		});

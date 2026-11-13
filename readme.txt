@@ -176,6 +176,26 @@ Every email sent about a booking (standard and custom) is listed under "Emails s
 
 == Changelog ==
 
+= 2.17.0-beta.3 =
+* Emails are now grouped by the part of the plugin they belong to: Every booking, Online payments, Customer rescheduling, After the visit, My bookings sign-in, Invoices, Courses, Waitlist, Resources and Bundles, with a "To" column showing who gets each one.
+* Emails for a part that's switched off (for example course reminders while Courses is off, or payment-failed emails with no online payment method) are hidden and aren't sent. A note on the Emails page lists what's hidden and why. Their wording and on/off setting are kept, so switching the feature back on brings them back as they were. You can still send one by hand from a booking.
+* The invoice and credit note emails now say when they're sent.
+
+= 2.17.0-beta.2 =
+* OSAM subscription: the status address is now always OSAM's billing (https://osamweb.com/portal/modules/addons/osam_client_bookings/status.php). It's shown on the Subscription tab but can't be changed there; an address saved on a site before is no longer used.
+
+= 2.17.0-beta.1 =
+* New: move to OSAM Bookings from Amelia. Services, staff, customers, events and every past and upcoming booking are read from Amelia's data on the same site, with times converted to your timezone. Amelia's email wording can be brought across too, with its placeholders translated.
+* New: move from Wix Bookings, by uploading Wix's booking list and contacts CSV files or by connecting with a Wix API key (the key isn't kept afterwards).
+* Imports show exactly what will be added, matched or left out before anything changes, never create duplicates if run again, and are silent: no emails, reminders, Zoom meetings or calendar entries for imported bookings. Large histories are imported in batches so nothing times out. Find it under Settings → Import, or from the setup wizard.
+* Simpler Stripe setup: paste your Stripe Secret key and save. It's checked with Stripe straight away, live or test is worked out from the key, and payment confirmations (the webhook) are set up automatically — there's no webhook secret to copy any more. Clear messages if the wrong key is pasted, a "Check connection" button and a "Disconnect" button. Sites that already had a webhook secret pasted keep working.
+* New "Pay now" button when money is still owed: in invoice emails, on the invoice PDF (clickable), on the customer's booking page and in My bookings. It opens a simple payment page with the amount due, lets the customer pay by Stripe, PayPal or WooCommerce, then marks the booking paid and emails the invoice. A booking that's already paid can't be paid again, and leaving checkout part-way never cancels a booking. Switch it off under Settings → Invoices.
+* Tidier menus: the WordPress sidebar now shows one link per area (Dashboard, Bookings, Calendar, Customers, Invoices, Services & events, Working hours, Settings). Everything else is in the tabs at the top of each screen, and old links still work.
+* Settings are grouped under Your business, Booking form, Connections and Advanced, with plainer names, and open on General instead of Features. Import now has its own tab under Settings.
+* OSAM subscription: the connection details are tucked away once the site is linked.
+* Zoom: meeting times are now always sent in UTC, so they're right for every WordPress timezone (including ones Zoom doesn't list and manual UTC offsets). Restoring a cancelled booking gets a fresh meeting; later dates of a paid repeat series get their meetings; deleting a booking, an event or a course intake deletes its Zoom meeting. Problems moving or cancelling a meeting are now shown on the booking and under Recent problems. "Test Zoom connection" now creates, moves and deletes a test meeting, so it checks every permission bookings need.
+* Fixed: invoices could fail to be numbered on databases that don't support MySQL's GET_LOCK.
+
 = 2.16.0 =
 * Updates now come from OSAM's new update server (updates.osamweb.com) instead of connect.osamweb.com. Calendar sign-in and the subscription check still use the connector.
 * Every update is now signed by OSAM. The plugin checks the signature before installing anything and refuses unsigned or altered zips, so updates stay safe even if an update server were compromised.
@@ -238,7 +258,7 @@ Every email sent about a booking (standard and custom) is listed under "Emails s
 * Two ways in: the site checks a status address hourly (every 10 minutes while overdue/suspended), and billing can call a signed webhook (/wp-json/osb/v1/licence/notify) for instant changes. Both directions are HMAC-signed with a per-site key.
 * "Overdue" shows a warning to the site owner; "full" suspension also locks the booking admin screens and pauses reminders and other scheduled emails.
 * Fail-safe: if billing can't be reached the last known status is kept, so an outage never switches a paying site off.
-* Settings can be locked with OSB_LICENCE_KEY / OSB_LICENCE_URL / OSB_LICENCE_SERVICE in wp-config.php. See WHMCS-INTEGRATION.md for the billing side.
+* Settings can be locked with OSB_LICENCE_KEY / OSB_LICENCE_SERVICE in wp-config.php (the status address is fixed to OSAM's billing; OSB_LICENCE_URL overrides it for testing only). See WHMCS-INTEGRATION.md for the billing side.
 
 = 2.7.1 =
 * New: OSAM can force an update or roll the plugin back from the connector. Required versions install by themselves, even with automatic updates off, and a withdrawn version that's reinstalled by hand is replaced again.

@@ -20,6 +20,7 @@ class OSB_Admin_Import {
 		add_action( 'admin_post_osb_import_run', array( __CLASS__, 'run' ) );
 		add_action( 'admin_post_osb_import_template', array( __CLASS__, 'template' ) );
 		add_action( 'admin_post_osb_export_items', array( __CLASS__, 'export' ) );
+		OSB_Admin_Migrate::init(); // Moving in from Amelia / Wix Bookings.
 	}
 
 	/**
@@ -89,6 +90,16 @@ class OSB_Admin_Import {
 	 * Page.
 	 */
 	public static function page() {
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended
+		if ( ! empty( $_GET['from'] ) && isset( OSB_Migrate::sources()[ sanitize_key( wp_unslash( $_GET['from'] ) ) ] ) ) {
+			OSB_Admin_Migrate::page();
+			return;
+		}
+		if ( empty( $_GET['type'] ) ) {
+			OSB_Admin_Migrate::hub(); // Opened from Settings → Import: show every way in.
+			return;
+		}
+		// phpcs:enable
 		$type  = self::type();
 		$types = OSB_Import::types();
 		$step  = isset( $_GET['step'] ) ? sanitize_key( $_GET['step'] ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended

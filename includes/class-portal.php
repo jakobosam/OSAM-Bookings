@@ -437,6 +437,8 @@ class OSB_Portal {
 			'can_move'    => (bool) $d['can_reschedule'],
 			'manage_url'  => $page,
 			'invoices'    => isset( $d['invoices'] ) ? $d['invoices'] : array(),
+			'pay_url'     => ! empty( $d['pay_url'] ) ? $d['pay_url'] : '',
+			'pay_label'   => ! empty( $d['pay_url'] ) ? $d['pay_label'] . ' — ' . $d['amount_due'] : '',
 			'color'       => '',
 		);
 	}

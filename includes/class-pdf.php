@@ -52,6 +52,13 @@ class OSB_Pdf {
 	private $images = array();
 
 	/**
+	 * Clickable areas: [ page index => [ [ x1, y1, x2, y2, url ] ] ] (PDF co-ordinates).
+	 *
+	 * @var array
+	 */
+	private $links = array();
+
+	/**
 	 * Document title.
 	 *
 	 * @var string
@@ -290,6 +297,23 @@ class OSB_Pdf {
 	 */
 	public function rect( $x, $y, $w, $h, $color ) {
 		$this->out( sprintf( '%s rg %s %s %s %s re f', self::rgb( $color ), self::n( $x ), self::n( self::H - $y - $h ), self::n( $w ), self::n( $h ) ) );
+	}
+
+	/**
+	 * Make an area of the current page open a web address when clicked.
+	 *
+	 * @param float  $x   Left.
+	 * @param float  $y   Top.
+	 * @param float  $w   Width.
+	 * @param float  $h   Height.
+	 * @param string $url Address (http/https).
+	 */
+	public function link( $x, $y, $w, $h, $url ) {
+		$url = preg_replace( '/[^\x21-\x7e]/', '', (string) $url );
+		if ( ! preg_match( '#^https?://#i', $url ) ) {
+			return;
+		}
+		$this->links[ count( $this->pages ) - 1 ][] = array( $x, self::H - $y - $h, $x + $w, self::H - $y, $url );
 	}
 
 	/**
@@ -548,12 +572,19 @@ class OSB_Pdf {
 		}
 		$res  = '<< /Font << /F1 3 0 R /F2 4 0 R >>' . ( $xobj ? ' /XObject << ' . $xobj . '>>' : '' ) . ' >>';
 		$kids = array();
-		foreach ( $this->pages as $content ) {
+		foreach ( $this->pages as $i => $content ) {
 			$stream        = function_exists( 'gzcompress' ) ? gzcompress( $content ) : $content;
 			$objs[ $next ] = array( '<<' . ( function_exists( 'gzcompress' ) ? ' /Filter /FlateDecode' : '' ), $stream );
-			$objs[ $next + 1 ] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' . self::n( self::W ) . ' ' . self::n( self::H ) . '] /Resources ' . $res . ' /Contents ' . $next . ' 0 R >>';
-			$kids[]        = ( $next + 1 ) . ' 0 R';
+			$page          = $next + 1;
+			$kids[]        = $page . ' 0 R';
 			$next         += 2;
+			$annots        = '';
+			foreach ( isset( $this->links[ $i ] ) ? $this->links[ $i ] : array() as $l ) {
+				$objs[ $next ] = '<< /Type /Annot /Subtype /Link /Rect [' . self::n( $l[0] ) . ' ' . self::n( $l[1] ) . ' ' . self::n( $l[2] ) . ' ' . self::n( $l[3] ) . '] /Border [0 0 0] /A << /Type /Action /S /URI /URI (' . self::esc( $l[4] ) . ') >> >>';
+				$annots       .= $next . ' 0 R ';
+				++$next;
+			}
+			$objs[ $page ] = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' . self::n( self::W ) . ' ' . self::n( self::H ) . '] /Resources ' . $res . ' /Contents ' . ( $page - 1 ) . ' 0 R' . ( $annots ? ' /Annots [' . trim( $annots ) . ']' : '' ) . ' >>';
 		}
 		$objs[2] = '<< /Type /Pages /Kids [' . implode( ' ', $kids ) . '] /Count ' . count( $kids ) . ' >>';
 		ksort( $objs );

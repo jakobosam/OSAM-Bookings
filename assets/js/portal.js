@@ -129,6 +129,7 @@
 				'<button type="button" class="osb-btn osb-btn--danger-solid" data-act="do-cancel"' + (s.busy ? ' disabled' : '') + '>' + esc(s.busy ? T.loading : T.yesCancel) + '</button></div>';
 		} else {
 			var btns = '';
+			if (b.pay_url) { btns += '<a class="osb-btn osb-btn--primary osb-btn--sm" href="' + esc(b.pay_url) + '">' + esc(b.pay_label) + '</a>'; }
 			if (upcoming && b.can_move) { btns += '<a class="osb-btn osb-btn--ghost osb-btn--sm" href="' + esc(b.manage_url) + '">' + esc(T.manage) + '</a>'; }
 			if (upcoming && b.can_cancel) {
 				btns += '<button type="button" class="osb-btn osb-btn--ghost osb-btn--sm osb-btn--danger" data-act="cancel" data-token="' + esc(b.token) + '">' + esc(T.cancel) + '</button>';

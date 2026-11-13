@@ -241,6 +241,11 @@ class OSB_Admin_Wizard {
 		?>
 		<h1><?php esc_html_e( 'What can people book?', 'osam-bookings' ); ?></h1>
 		<p class="osb-lead"><?php esc_html_e( 'Add your main services now — name, length and price. Descriptions, images and group classes can be added later.', 'osam-bookings' ); ?></p>
+		<div class="osb-alert osb-alert--info"><span class="dashicons dashicons-upload"></span><div>
+			<strong><?php esc_html_e( 'Moving from Amelia or Wix?', 'osam-bookings' ); ?></strong>
+			<?php esc_html_e( 'Bring your services, customers and bookings across instead of typing them in. Nothing is emailed to customers.', 'osam-bookings' ); ?>
+			<a href="<?php echo esc_url( admin_url( 'admin.php?page=osb-import' ) ); ?>" target="_blank"><?php esc_html_e( 'Open the importer', 'osam-bookings' ); ?> ↗</a>
+		</div></div>
 		<?php if ( $existing ) : ?>
 			<div class="osb-existing">
 				<strong><?php esc_html_e( 'Already added:', 'osam-bookings' ); ?></strong>
@@ -296,12 +301,22 @@ class OSB_Admin_Wizard {
 				</div>
 			</div>
 			<div class="osb-paycard <?php echo $s['stripe_enabled'] ? 'is-on' : ''; ?>">
-				<label class="osb-paycard__head"><span class="dashicons dashicons-credit-card"></span><span><strong>Stripe</strong><small><?php esc_html_e( 'Cards, Apple Pay, Google Pay', 'osam-bookings' ); ?></small></span><span class="osb-switch"><input type="hidden" name="stripe_enabled" value="0"><input type="checkbox" name="stripe_enabled" value="1" <?php checked( $s['stripe_enabled'] ); ?>><span></span></span></label>
+				<label class="osb-paycard__head"><span class="dashicons dashicons-bank"></span><span><strong>Stripe</strong><small><?php esc_html_e( 'Cards, Apple Pay, Google Pay', 'osam-bookings' ); ?></small></span><span class="osb-switch"><input type="hidden" name="stripe_enabled" value="0"><input type="checkbox" name="stripe_enabled" value="1" <?php checked( $s['stripe_enabled'] ); ?>><span></span></span></label>
 				<div class="osb-paycard__body">
-					<div class="osb-field"><label><?php esc_html_e( 'Mode', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'stripe_mode', $s['stripe_mode'], 'select', array( 'test' => __( 'Test', 'osam-bookings' ), 'live' => __( 'Live', 'osam-bookings' ) ) ); ?></div>
-					<div class="osb-field"><label><?php esc_html_e( 'Test secret key', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'stripe_test_secret', $s['stripe_test_secret'], 'password', array( 'placeholder' => 'sk_test_…' ) ); ?></div>
-					<div class="osb-field"><label><?php esc_html_e( 'Live secret key', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'stripe_live_secret', $s['stripe_live_secret'], 'password', array( 'placeholder' => 'sk_live_…' ) ); ?></div>
-					<p class="osb-help"><?php esc_html_e( 'Add the webhook later in Settings → Payments for extra reliability.', 'osam-bookings' ); ?></p>
+					<?php
+					$stripe = osb()->payments->get( 'stripe' );
+					if ( $stripe && $stripe->is_configured() ) :
+						?>
+						<p class="osb-help"><span class="dashicons dashicons-yes" aria-hidden="true"></span>
+							<?php echo 'live' === $stripe->mode() ? esc_html__( 'Stripe is connected and taking real payments.', 'osam-bookings' ) : esc_html__( 'Stripe is connected in test mode — no real money is taken.', 'osam-bookings' ); ?>
+							<a href="<?php echo esc_url( admin_url( 'admin.php?page=osb-settings&tab=payments' ) ); ?>"><?php esc_html_e( 'Change the key', 'osam-bookings' ); ?></a>
+						</p>
+						<?php
+					elseif ( $stripe ) :
+						$stripe->key_steps( false );
+						$stripe->key_field( false );
+					endif;
+					?>
 				</div>
 			</div>
 			<div class="osb-paycard <?php echo $s['paypal_enabled'] ? 'is-on' : ''; ?>">
@@ -498,12 +513,31 @@ class OSB_Admin_Wizard {
 				foreach ( array( 'onsite_enabled', 'stripe_enabled', 'paypal_enabled', 'woo_enabled' ) as $k ) {
 					$v[ $k ] = ! empty( $post[ $k ] ) ? 1 : 0;
 				}
-				foreach ( array( 'stripe_test_secret', 'stripe_live_secret', 'paypal_client_id', 'paypal_secret' ) as $k ) {
+				foreach ( array( 'paypal_client_id', 'paypal_secret' ) as $k ) {
 					$v[ $k ] = trim( sanitize_text_field( isset( $post[ $k ] ) ? $post[ $k ] : '' ) );
 				}
 				$v['onsite_status'] = isset( $post['onsite_status'] ) && 'pending' === $post['onsite_status'] ? 'pending' : 'confirmed';
-				$v['stripe_mode']   = isset( $post['stripe_mode'] ) && 'live' === $post['stripe_mode'] ? 'live' : 'test';
 				$v['paypal_mode']   = isset( $post['paypal_mode'] ) && 'live' === $post['paypal_mode'] ? 'live' : 'sandbox';
+				$stripe             = osb()->payments->get( 'stripe' );
+				$stripe_key         = isset( $post['stripe_key'] ) ? trim( (string) $post['stripe_key'] ) : '';
+				$stripe_error       = '';
+				if ( $stripe && $v['stripe_enabled'] && '' !== $stripe_key ) {
+					$r = $stripe->connect( $stripe_key );
+					if ( is_wp_error( $r ) ) {
+						$stripe_error = $r->get_error_message();
+					} elseif ( $r['warning'] ) {
+						OSB_Admin::flash_warnings( array( $r['warning'] ) );
+					}
+				} elseif ( $stripe && $v['stripe_enabled'] && ! $stripe->is_configured() ) {
+					$stripe_error = __( 'Stripe is switched on but there’s no key yet. Paste your Stripe Secret key, or switch Stripe off for now — you can add it later in Settings → Payments.', 'osam-bookings' );
+				}
+				if ( '' !== $stripe_error ) {
+					$v['stripe_enabled'] = $stripe && $stripe->is_configured() ? 1 : 0;
+					OSB_Settings::update( $v );
+					OSB_Admin::flash_error( $stripe_error );
+					wp_safe_redirect( self::url( 'payments' ) );
+					exit;
+				}
 				OSB_Settings::update( $v );
 				break;
 

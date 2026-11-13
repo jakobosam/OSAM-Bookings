@@ -365,6 +365,147 @@ class OSB_Frontend {
 	}
 
 	/**
+	 * The "pay for your booking" page (opened from a Pay now link — see OSB_Payments::pay_page()).
+	 * A complete, self-contained document: no theme, no JavaScript needed.
+	 *
+	 * @param object $booking Booking.
+	 * @param string $outcome Result of a checkout the customer has just come back from ('' = none).
+	 * @param string $error   Problem starting checkout.
+	 * @return string HTML.
+	 */
+	public static function pay_page_html( $booking, $outcome = '', $error = '' ) {
+		$s        = OSB_Settings::all();
+		$accent   = sanitize_hex_color( (string) $s['primary_color'] );
+		$accent   = $accent ? $accent : '#161a40';
+		$on       = sanitize_hex_color( (string) $s['on_accent_color'] );
+		$on       = $on ? $on : '#ffffff';
+		$d        = OSB_Bookings::details( $booking );
+		$due      = OSB_Payments::payable( $booking );
+		$gateways = $due > 0 ? OSB_Payments::pay_gateways( $booking ) : array();
+		$paid     = in_array( $booking->payment_status, array( 'paid', 'free' ), true );
+		$site     = get_bloginfo( 'name' );
+		$notice   = '';
+		$tone     = 'info';
+		$form     = $due > 0 && $gateways;
+
+		if ( $paid ) {
+			$title  = __( 'Payment received — thank you', 'osam-bookings' );
+			$notice = 'success' === $outcome ? __( 'Your payment has gone through. There is nothing more to pay.', 'osam-bookings' ) : __( 'This booking has been paid in full. There is nothing more to pay.', 'osam-bookings' );
+			$tone   = 'ok';
+			$form   = false;
+		} elseif ( in_array( $outcome, array( 'pending', 'success' ), true ) ) {
+			$title  = __( 'We’re confirming your payment', 'osam-bookings' );
+			$notice = __( 'This can take a few minutes. We’ll email you as soon as it has gone through — please don’t pay again in the meantime.', 'osam-bookings' );
+			$form   = false;
+		} elseif ( ! $form ) {
+			$title  = __( 'Nothing to pay online', 'osam-bookings' );
+			$notice = 'cancelled' === $booking->status ? __( 'This booking has been cancelled, so there is nothing to pay.', 'osam-bookings' ) : __( 'This booking can’t be paid online at the moment. Please contact us if you think something is owed.', 'osam-bookings' );
+		} else {
+			$title = 'pending_payment' === $booking->status ? __( 'Complete your payment', 'osam-bookings' ) : __( 'Pay for your booking', 'osam-bookings' );
+			if ( '' !== $error ) {
+				$notice = $error;
+				$tone   = 'bad';
+			} elseif ( 'cancelled' === $outcome ) {
+				$notice = __( 'The payment wasn’t completed and nothing has been taken. You can try again below.', 'osam-bookings' );
+			} elseif ( 'failed' === $outcome ) {
+				$notice = __( 'The payment didn’t go through. Please try again, or choose another way to pay.', 'osam-bookings' );
+				$tone   = 'bad';
+			}
+		}
+
+		$when = 'bundle' === $booking->type ? '' : $d['date'] . ', ' . $d['time'];
+		$rows = array();
+		if ( $when ) {
+			$rows[] = array( __( 'When', 'osam-bookings' ), $when );
+		}
+		$rows[] = array( __( 'Reference', 'osam-bookings' ), '#' . (int) $booking->id );
+		$rows[] = array( __( 'Name', 'osam-bookings' ), (string) $booking->customer_name );
+		if ( $form && abs( $due - (float) $booking->amount ) > 0.009 ) {
+			$rows[] = array( __( 'Booking total', 'osam-bookings' ), $d['amount'] );
+		}
+
+		ob_start();
+		?>
+<!DOCTYPE html>
+<html <?php language_attributes(); ?>>
+<head>
+<meta charset="<?php bloginfo( 'charset' ); ?>">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title><?php echo esc_html( $title . ' — ' . $site ); ?></title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:32px 16px;background:#f5f7fa;color:#1f2933;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.osb-pay{max-width:480px;margin:0 auto}
+.osb-pay__site{margin:0 0 16px;text-align:center;font-weight:600;color:#667085}
+.osb-pay__card{background:#fff;border:1px solid #e4e7ec;border-top:4px solid <?php echo esc_html( $accent ); ?>;border-radius:10px;padding:28px 24px}
+.osb-pay h1{margin:0 0 16px;font-size:22px;line-height:1.25}
+.osb-pay__note{margin:0 0 18px;padding:12px 14px;border-radius:8px;background:#eef2f6}
+.osb-pay__note--ok{background:#e7f6ec;color:#146c2e}
+.osb-pay__note--bad{background:#fdecea;color:#b42318}
+.osb-pay__item{margin:0 0 6px;font-weight:700;font-size:17px}
+.osb-pay dl{margin:0 0 18px;display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:14px}
+.osb-pay dt{color:#667085}
+.osb-pay dd{margin:0}
+.osb-pay__due{display:flex;justify-content:space-between;align-items:baseline;margin:0 0 20px;padding:14px 0;border-top:1px solid #e4e7ec;border-bottom:1px solid #e4e7ec}
+.osb-pay__due strong{font-size:26px}
+.osb-pay fieldset{margin:0 0 18px;padding:0;border:0}
+.osb-pay legend{padding:0;margin:0 0 8px;font-weight:600}
+.osb-pay__method{display:flex;gap:10px;align-items:flex-start;margin:0 0 8px;padding:12px 14px;border:1px solid #d0d5dd;border-radius:8px;cursor:pointer}
+.osb-pay__method small{display:block;color:#667085}
+.osb-pay__btn{display:block;width:100%;padding:14px 20px;border:0;border-radius:8px;background:<?php echo esc_html( $accent ); ?>;color:<?php echo esc_html( $on ); ?>;font:inherit;font-weight:700;font-size:17px;cursor:pointer;text-align:center;text-decoration:none}
+.osb-pay__btn:hover{filter:brightness(1.12)}
+.osb-pay__links{margin:18px 0 0;text-align:center;font-size:14px}
+.osb-pay__links a{color:#475467}
+</style>
+</head>
+<body>
+<main class="osb-pay">
+	<p class="osb-pay__site"><?php echo esc_html( $site ); ?></p>
+	<div class="osb-pay__card">
+		<h1><?php echo esc_html( $title ); ?></h1>
+		<?php if ( '' !== $notice ) : ?>
+			<p class="osb-pay__note osb-pay__note--<?php echo esc_attr( $tone ); ?>" role="status"><?php echo esc_html( $notice ); ?></p>
+		<?php endif; ?>
+		<p class="osb-pay__item"><?php echo esc_html( $d['item_name'] ); ?></p>
+		<dl>
+			<?php foreach ( $rows as $row ) : ?>
+				<dt><?php echo esc_html( $row[0] ); ?></dt><dd><?php echo esc_html( $row[1] ); ?></dd>
+			<?php endforeach; ?>
+		</dl>
+		<?php if ( $form ) : ?>
+			<p class="osb-pay__due"><span><?php esc_html_e( 'Amount to pay', 'osam-bookings' ); ?></span><strong><?php echo esc_html( OSB_Settings::money( $due, $booking->currency ) ); ?></strong></p>
+			<form method="post" action="<?php echo esc_url( OSB_Payments::pay_url( $booking ) ); ?>">
+				<?php if ( count( $gateways ) > 1 ) : ?>
+					<fieldset>
+						<legend><?php esc_html_e( 'How would you like to pay?', 'osam-bookings' ); ?></legend>
+						<?php $first = true; ?>
+						<?php foreach ( $gateways as $id => $gateway ) : ?>
+							<label class="osb-pay__method">
+								<input type="radio" name="osb_method" value="<?php echo esc_attr( $id ); ?>" <?php checked( $first ); ?> required>
+								<span><?php echo esc_html( $gateway->title() ); ?><?php echo $gateway->description() ? '<small>' . esc_html( wp_strip_all_tags( $gateway->description() ) ) . '</small>' : ''; ?></span>
+							</label>
+							<?php $first = false; ?>
+						<?php endforeach; ?>
+					</fieldset>
+				<?php else : ?>
+					<input type="hidden" name="osb_method" value="<?php echo esc_attr( (string) key( $gateways ) ); ?>">
+				<?php endif; ?>
+				<button type="submit" class="osb-pay__btn"><?php echo esc_html( OSB_Payments::pay_label( $booking ) ); ?></button>
+			</form>
+		<?php elseif ( ! $paid && in_array( $outcome, array( 'pending', 'success' ), true ) ) : ?>
+			<a class="osb-pay__btn" href="<?php echo esc_url( OSB_Payments::pay_url( $booking ) ); ?>"><?php esc_html_e( 'Check again', 'osam-bookings' ); ?></a>
+		<?php endif; ?>
+	</div>
+	<p class="osb-pay__links"><a href="<?php echo esc_url( $d['manage_url'] ); ?>"><?php esc_html_e( 'View your booking', 'osam-bookings' ); ?></a></p>
+</main>
+</body>
+</html>
+		<?php
+		return (string) apply_filters( 'osb_pay_page_html', ob_get_clean(), $booking, $outcome );
+	}
+
+	/**
 	 * Shortcode output.
 	 *
 	 * @param array $atts Attributes.

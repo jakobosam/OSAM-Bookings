@@ -29,6 +29,10 @@ class OSB_Meetings {
 		add_action( 'osb_booking_status_changed', array( __CLASS__, 'on_status' ), 10, 3 );
 		add_action( 'osb_booking_rescheduled', array( __CLASS__, 'on_moved' ), 10, 1 );
 		add_action( 'osb_event_saved', array( __CLASS__, 'on_event_saved' ), 20, 1 );
+		// Fired by the delete screens (with the row, before it goes) so the Zoom meeting goes too.
+		add_action( 'osb_booking_before_delete', array( __CLASS__, 'on_booking_delete' ), 10, 1 );
+		add_action( 'osb_event_deleted', array( __CLASS__, 'on_event_deleted' ), 10, 1 );
+		add_action( 'osb_course_intake_deleted', array( __CLASS__, 'on_intake_deleted' ), 10, 1 );
 	}
 
 	/**
@@ -218,9 +222,87 @@ class OSB_Meetings {
 	 * @param string $status  New status.
 	 */
 	public static function on_status( $booking, $old, $status ) {
-		if ( 'cancelled' === $status && 'service' === $booking->type && 0 === strpos( (string) $booking->meeting_id, 'zoom:' ) ) {
-			self::zoom( 'DELETE', '/meetings/' . rawurlencode( substr( $booking->meeting_id, 5 ) ) );
+		$own = 'service' === $booking->type && 0 === strpos( (string) $booking->meeting_id, 'zoom:' );
+		if ( 'cancelled' === $status ) {
+			if ( $own ) {
+				$res = self::zoom( 'DELETE', '/meetings/' . rawurlencode( substr( $booking->meeting_id, 5 ) ) );
+				if ( is_wp_error( $res ) ) {
+					self::log_error( $booking, $res );
+					return;
+				}
+				// The link is dead now: forget it, so a restored booking gets a new meeting instead of a broken link.
+				$booking->meeting_url = '';
+				$booking->meeting_id  = '';
+				OSB_DB::update(
+					'bookings',
+					$booking->id,
+					array(
+						'meeting_url' => '',
+						'meeting_id'  => '',
+					)
+				);
+			}
+			return;
 		}
+		// Back on (restored, or paid without a confirmation email of its own, e.g. the later dates of a series).
+		if ( in_array( $status, array( 'pending', 'confirmed' ), true ) && in_array( $old, array( 'cancelled', 'pending_payment', 'payment_failed', 'no_show' ), true ) ) {
+			if ( $own ) {
+				self::on_moved( $booking ); // Kept its meeting (Zoom couldn't be reached when it was cancelled): make sure the time is right.
+			}
+			self::ensure( $booking );
+		}
+	}
+
+	/**
+	 * Appointment about to be deleted for good: its own Zoom meeting goes too.
+	 *
+	 * @param object $booking Booking row (still readable).
+	 */
+	public static function on_booking_delete( $booking ) {
+		if ( $booking && 'service' === $booking->type && 0 === strpos( (string) $booking->meeting_id, 'zoom:' ) ) {
+			$res = self::zoom( 'DELETE', '/meetings/' . rawurlencode( substr( $booking->meeting_id, 5 ) ) );
+			if ( is_wp_error( $res ) ) {
+				self::log_error( $booking, $res );
+			}
+		}
+	}
+
+	/**
+	 * Event deleted: delete its shared Zoom meeting.
+	 *
+	 * @param int $event_id Event.
+	 */
+	public static function on_event_deleted( $event_id ) {
+		self::drop_shared( 'event-' . (int) $event_id );
+	}
+
+	/**
+	 * Course intake deleted: delete its recurring Zoom meeting.
+	 *
+	 * @param int $intake_id Intake.
+	 */
+	public static function on_intake_deleted( $intake_id ) {
+		self::drop_shared( 'intake-' . (int) $intake_id );
+	}
+
+	/**
+	 * Forget a shared meeting, deleting it in Zoom.
+	 *
+	 * @param string $key event-N or intake-N.
+	 */
+	private static function drop_shared( $key ) {
+		$refs = self::refs();
+		if ( empty( $refs[ $key ] ) ) {
+			return;
+		}
+		if ( 'zoom' === $refs[ $key ]['provider'] && '' !== (string) $refs[ $key ]['id'] ) {
+			$res = self::zoom( 'DELETE', '/meetings/' . rawurlencode( $refs[ $key ]['id'] ) );
+			if ( is_wp_error( $res ) ) {
+				self::log_error( (object) array( 'id' => 0 ), $res );
+			}
+		}
+		unset( $refs[ $key ] );
+		update_option( self::REFS, $refs, false );
 	}
 
 	/**
@@ -236,7 +318,10 @@ class OSB_Meetings {
 			return;
 		}
 		$body = self::zoom_time( $booking->start_at, $booking->end_at );
-		self::zoom( 'PATCH', '/meetings/' . rawurlencode( substr( $booking->meeting_id, 5 ) ), $body );
+		$res  = self::zoom( 'PATCH', '/meetings/' . rawurlencode( substr( $booking->meeting_id, 5 ) ), $body );
+		if ( is_wp_error( $res ) ) {
+			self::log_error( $booking, $res );
+		}
 	}
 
 	/**
@@ -251,7 +336,10 @@ class OSB_Meetings {
 		if ( ! $e || empty( $refs[ $key ] ) || 'zoom' !== $refs[ $key ]['provider'] ) {
 			return;
 		}
-		self::zoom( 'PATCH', '/meetings/' . rawurlencode( $refs[ $key ]['id'] ), array_merge( array( 'topic' => $e->name ), self::zoom_time( $e->start_at, $e->end_at ) ) );
+		$res = self::zoom( 'PATCH', '/meetings/' . rawurlencode( $refs[ $key ]['id'] ), array_merge( array( 'topic' => $e->name ), self::zoom_time( $e->start_at, $e->end_at ) ) );
+		if ( is_wp_error( $res ) ) {
+			self::log_error( (object) array( 'id' => 0 ), new WP_Error( $res->get_error_code(), $e->name . ' — ' . $res->get_error_message() ) );
+		}
 	}
 
 	/* ---------------------------------------------------------------------
@@ -316,7 +404,8 @@ class OSB_Meetings {
 		if ( $shared ) {
 			$refs = self::refs();
 			if ( ! empty( $refs[ $shared ]['url'] ) && $refs[ $shared ]['provider'] === $mode ) {
-				return array( 'url' => $refs[ $shared ]['url'], 'id' => $mode . ':' . $refs[ $shared ]['id'] );
+				// "zoom-shared", as for the first person booked: never the "zoom:" prefix an appointment's own meeting has.
+				return array( 'url' => $refs[ $shared ]['url'], 'id' => ( 'zoom' === $mode ? 'zoom-shared' : $mode ) . ':' . $refs[ $shared ]['id'] );
 			}
 		}
 
@@ -378,6 +467,9 @@ class OSB_Meetings {
 	private static function log_error( $booking, $err ) {
 		$log = get_option( 'osb_meeting_errors', array() );
 		$log = is_array( $log ) ? $log : array();
+		if ( $log && (int) $log[0]['booking'] === (int) $booking->id && $log[0]['message'] === $err->get_error_message() ) {
+			return; // Same problem as a moment ago (the link is tried at more than one step).
+		}
 		array_unshift(
 			$log,
 			array(
@@ -430,6 +522,10 @@ class OSB_Meetings {
 			return $cached;
 		}
 		$secret = OSB_Calendar_Sync::unseal( OSB_Settings::get( 'zoom_client_secret' ) );
+		if ( '' === (string) $secret ) {
+			// Sealed with the site's security keys; if those change it can't be read back.
+			return new WP_Error( 'osb_zoom_secret', __( 'The saved Zoom client secret can’t be read any more. Enter it again in Settings → Online meetings.', 'osam-bookings' ) );
+		}
 		$res    = wp_remote_post(
 			'https://zoom.us/oauth/token',
 			array(
@@ -489,7 +585,8 @@ class OSB_Meetings {
 			delete_transient( 'osb_zoom_token' );
 			return self::zoom( $method, $path, $body, false );
 		}
-		$data = json_decode( (string) wp_remote_retrieve_body( $res ), true );
+		// Meeting numbers can be longer than a 32-bit integer holds: keep those as strings rather than floats.
+		$data = json_decode( (string) wp_remote_retrieve_body( $res ), true, 512, JSON_BIGINT_AS_STRING );
 		$data = is_array( $data ) ? $data : array();
 		if ( $code >= 400 ) {
 			if ( 'DELETE' === $method && 404 === $code ) {
@@ -509,18 +606,15 @@ class OSB_Meetings {
 	 * @return array
 	 */
 	private static function zoom_time( $start, $end ) {
-		$tz   = wp_timezone_string();
-		$zone = preg_match( '/^[+-]\d{2}:\d{2}$/', $tz ) ? '' : $tz;
-		$dt   = new DateTime( $start, wp_timezone() );
-		$out  = array( 'duration' => max( 15, (int) round( ( strtotime( $end ) - strtotime( $start ) ) / 60 ) ) );
-		if ( $zone ) {
-			$out['start_time'] = $dt->format( 'Y-m-d\TH:i:s' );
-			$out['timezone']   = $zone;
-		} else {
-			$dt->setTimezone( new DateTimeZone( 'UTC' ) );
-			$out['start_time'] = $dt->format( 'Y-m-d\TH:i:s\Z' );
-		}
-		return $out;
+		// Always sent as UTC ("Z"). Zoom only knows a short list of timezone names (not, say, Europe/Kyiv or
+		// America/Indiana/Indianapolis, and no "+01:00" offsets), and a name it doesn't know can't be relied on.
+		// wp_timezone() handles named zones (with daylight saving) and manual offsets alike.
+		$dt = new DateTime( $start, wp_timezone() );
+		$dt->setTimezone( new DateTimeZone( 'UTC' ) );
+		return array(
+			'duration'   => max( 15, (int) round( ( strtotime( $end ) - strtotime( $start ) ) / 60 ) ),
+			'start_time' => $dt->format( 'Y-m-d\TH:i:s\Z' ),
+		);
 	}
 
 	/**

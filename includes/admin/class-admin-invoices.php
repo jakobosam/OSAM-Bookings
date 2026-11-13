@@ -770,6 +770,8 @@ class OSB_Admin_Invoices {
 			$field( 'inv_email_credit', __( 'Email credit notes to the customer', 'osam-bookings' ), $s['inv_email_credit'], 'checkbox' );
 			$field( 'inv_attach_admin', __( 'Send me a copy (attach the invoice to the admin “new booking” email)', 'osam-bookings' ), $s['inv_attach_admin'], 'checkbox' );
 			$field( 'inv_customer_download', __( 'Let customers download their invoices from their booking page and My bookings', 'osam-bookings' ), $s['inv_customer_download'], 'checkbox' );
+			// On unless it has been switched off (sites updated from before the button existed have no saved value).
+			$field( 'inv_pay_button', __( 'Show a “Pay now” button when money is still owed', 'osam-bookings' ), isset( $s['inv_pay_button'] ) ? $s['inv_pay_button'] : 1, 'checkbox', array( 'help' => __( 'Customers can pay what they owe online from the invoice email and PDF, their booking page and My bookings. Only shown when a booking is unpaid, not cancelled, and you take payments online (Stripe or PayPal).', 'osam-bookings' ) ) );
 			?>
 			<div class="osb-fieldgrid">
 				<?php
@@ -823,6 +825,7 @@ class OSB_Admin_Invoices {
 			'inv_email_credit'      => $b( 'inv_email_credit' ),
 			'inv_attach_admin'      => $b( 'inv_attach_admin' ),
 			'inv_customer_download' => $b( 'inv_customer_download' ),
+			'inv_pay_button'        => $b( 'inv_pay_button' ),
 			'inv_bill_to_fields'    => implode( ',', array_filter( array_map( 'sanitize_key', explode( ',', $t( 'inv_bill_to_fields' ) ) ) ) ),
 		);
 	}

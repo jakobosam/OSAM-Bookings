@@ -491,3 +491,7 @@
 /* Shown instead of the form while bookings are switched off. */
 .osb-booking.osb-booking.osb-booking--off { max-width: 640px; }
 .osb-booking.osb-booking.osb-booking--off .osb-alert { margin: 0; }
+
+/* "Pay now" on the booking page and My bookings: put it first, on a row of its own. */
+.osb-booking.osb-booking .osb-actions--center .osb-btn--pay { order: -1; flex: 1 1 100%; max-width: 360px; }
+.osb-booking.osb-booking .osb-portal__btns .osb-btn--primary { margin-left: 0; }
