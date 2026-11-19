@@ -4,7 +4,7 @@ Tags: booking, appointments, events, courses, stripe, paypal, woocommerce, zoom
 Requires at least: 6.2
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 2.16.0
+Stable tag: 2.17.0
 License: GPLv2 or later
 
 Booking system for services (appointments, group sessions), events and multi-session courses, with Stripe, PayPal, WooCommerce and pay-on-site payments.
@@ -176,27 +176,7 @@ Every email sent about a booking (standard and custom) is listed under "Emails s
 
 == Changelog ==
 
-= 2.17.0-beta.5 =
-* The daily status report now includes the newest problem-log entries (last 14 days, up to 25) so they can be read on the OSAM update dashboard. Email addresses, anything in quotes and phone or card numbers are removed on the site before sending, and only ids (booking, gateway, calendar connection) are kept. `define( 'OSB_REPORT', false );` still switches the report off.
-
-= 2.17.0-beta.4 =
-* New optional feature, Deposits & part payments (off by default, Settings → Features on/off): take a deposit online when people book and collect the rest later. Set it site-wide (fixed per booking, per person, or a percentage) or per service, event, course or resource, and let customers choose to pay in full instead if you like.
-* Bookings with a deposit show as "Deposit paid" with the balance everywhere: admin, calendar, emails ({deposit_paid} and {balance_due}), invoices, My bookings, reports and the CSV export. The "Pay now" link collects the balance online, staff can record it as paid in person, and a new "Balance due" email reminds customers before the visit. Restaurant table deposits show as "Deposit paid" until the bill is settled on the night.
-* Keep reminders on time: the dashboard and the end of the setup wizard now check whether the booking jobs run every 5 minutes, and show step-by-step cPanel instructions with the exact cron command for the site (copy buttons included), plus the wp-config.php line to add once it works. A new "Set up the server cron job" step is on the setup checklist.
-* New "Recent problems" card on the dashboard: payment errors, calendar sync problems, emails that couldn't be sent, Zoom problems, failed update checks and late scheduled jobs are now all recorded in one place (payment errors used to be logged only with WP_DEBUG on).
-* New: once a day OSAM Bookings sends a short status report to OSAM's update server so OSAM can spot problems early. It contains versions (plugin, WordPress, PHP, database), basic site settings (title, address, theme, number of plugins, memory, HTTPS, debug and cron settings), whether scheduled jobs run on time, which features and payment methods are on (Stripe live/test and webhook), Zoom and calendar connections, the subscription status, problem-log counts, and plain booking totals. It never includes customer names, emails, phone numbers or booking details. After each update the site also tells the server whether the update worked. To switch the report off, add define( 'OSB_REPORT', false ); to wp-config.php; updates keep working.
-* Fixed: bookings could fail on hosts whose database doesn't support MySQL's GET_LOCK (e.g. SQLite).
-* Every release is now automatically checked before it can be signed: PHP syntax on PHP 7.4 and 8.3, end-to-end tests of booking, paying, invoicing, cancelling, deposits and the Amelia/Wix importers, and the update server's tests.
-
-= 2.17.0-beta.3 =
-* Emails are now grouped by the part of the plugin they belong to: Every booking, Online payments, Customer rescheduling, After the visit, My bookings sign-in, Invoices, Courses, Waitlist, Resources and Bundles, with a "To" column showing who gets each one.
-* Emails for a part that's switched off (for example course reminders while Courses is off, or payment-failed emails with no online payment method) are hidden and aren't sent. A note on the Emails page lists what's hidden and why. Their wording and on/off setting are kept, so switching the feature back on brings them back as they were. You can still send one by hand from a booking.
-* The invoice and credit note emails now say when they're sent.
-
-= 2.17.0-beta.2 =
-* OSAM subscription: the status address is now always OSAM's billing (https://osamweb.com/portal/modules/addons/osam_client_bookings/status.php). It's shown on the Subscription tab but can't be changed there; an address saved on a site before is no longer used.
-
-= 2.17.0-beta.1 =
+= 2.17.0 =
 * New: move to OSAM Bookings from Amelia. Services, staff, customers, events and every past and upcoming booking are read from Amelia's data on the same site, with times converted to your timezone. Amelia's email wording can be brought across too, with its placeholders translated.
 * New: move from Wix Bookings, by uploading Wix's booking list and contacts CSV files or by connecting with a Wix API key (the key isn't kept afterwards).
 * Imports show exactly what will be added, matched or left out before anything changes, never create duplicates if run again, and are silent: no emails, reminders, Zoom meetings or calendar entries for imported bookings. Large histories are imported in batches so nothing times out. Find it under Settings → Import, or from the setup wizard.
@@ -207,6 +187,18 @@ Every email sent about a booking (standard and custom) is listed under "Emails s
 * OSAM subscription: the connection details are tucked away once the site is linked.
 * Zoom: meeting times are now always sent in UTC, so they're right for every WordPress timezone (including ones Zoom doesn't list and manual UTC offsets). Restoring a cancelled booking gets a fresh meeting; later dates of a paid repeat series get their meetings; deleting a booking, an event or a course intake deletes its Zoom meeting. Problems moving or cancelling a meeting are now shown on the booking and under Recent problems. "Test Zoom connection" now creates, moves and deletes a test meeting, so it checks every permission bookings need.
 * Fixed: invoices could fail to be numbered on databases that don't support MySQL's GET_LOCK.
+* OSAM subscription: the status address is now always OSAM's billing (https://osamweb.com/portal/modules/addons/osam_client_bookings/status.php). It's shown on the Subscription tab but can't be changed there; an address saved on a site before is no longer used.
+* Emails are now grouped by the part of the plugin they belong to: Every booking, Online payments, Customer rescheduling, After the visit, My bookings sign-in, Invoices, Courses, Waitlist, Resources and Bundles, with a "To" column showing who gets each one.
+* Emails for a part that's switched off (for example course reminders while Courses is off, or payment-failed emails with no online payment method) are hidden and aren't sent. A note on the Emails page lists what's hidden and why. Their wording and on/off setting are kept, so switching the feature back on brings them back as they were. You can still send one by hand from a booking.
+* The invoice and credit note emails now say when they're sent.
+* New optional feature, Deposits & part payments (off by default, Settings → Features on/off): take a deposit online when people book and collect the rest later. Set it site-wide (fixed per booking, per person, or a percentage) or per service, event, course or resource, and let customers choose to pay in full instead if you like.
+* Bookings with a deposit show as "Deposit paid" with the balance everywhere: admin, calendar, emails ({deposit_paid} and {balance_due}), invoices, My bookings, reports and the CSV export. The "Pay now" link collects the balance online, staff can record it as paid in person, and a new "Balance due" email reminds customers before the visit. Restaurant table deposits show as "Deposit paid" until the bill is settled on the night.
+* Keep reminders on time: the dashboard and the end of the setup wizard now check whether the booking jobs run every 5 minutes, and show step-by-step cPanel instructions with the exact cron command for the site (copy buttons included), plus the wp-config.php line to add once it works. A new "Set up the server cron job" step is on the setup checklist.
+* New "Recent problems" card on the dashboard: payment errors, calendar sync problems, emails that couldn't be sent, Zoom problems, failed update checks and late scheduled jobs are now all recorded in one place (payment errors used to be logged only with WP_DEBUG on).
+* New: once a day OSAM Bookings sends a short status report to OSAM's update server so OSAM can spot problems early. It contains versions (plugin, WordPress, PHP, database), basic site settings (title, address, theme, number of plugins, memory, HTTPS, debug and cron settings), whether scheduled jobs run on time, which features and payment methods are on (Stripe live/test and webhook), Zoom and calendar connections, the subscription status, problem-log counts, and plain booking totals. It never includes customer names, emails, phone numbers or booking details. After each update the site also tells the server whether the update worked. To switch the report off, add define( 'OSB_REPORT', false ); to wp-config.php; updates keep working.
+* Fixed: bookings could fail on hosts whose database doesn't support MySQL's GET_LOCK (e.g. SQLite).
+* Every release is now automatically checked before it can be signed: PHP syntax on PHP 7.4 and 8.3, end-to-end tests of booking, paying, invoicing, cancelling, deposits and the Amelia/Wix importers, and the update server's tests.
+* The daily status report now includes the newest problem-log entries (last 14 days, up to 25) so they can be read on the OSAM update dashboard. Email addresses, anything in quotes and phone or card numbers are removed on the site before sending, and only ids (booking, gateway, calendar connection) are kept. `define( 'OSB_REPORT', false );` still switches the report off.
 
 = 2.16.0 =
 * Updates now come from OSAM's new update server (updates.osamweb.com) instead of connect.osamweb.com. Calendar sign-in and the subscription check still use the connector.

@@ -117,7 +117,7 @@ OSAM Bookings 2.17+ sends a small JSON report once a day (`POST /v1/report`, abo
 - updates: auto-updates on/off, last required-version install (from → to, ok, error), withdrawn versions, last update check
 - scheduled jobs: state (ok / server / visitor / late / never), last run, whether a server cron job runs them
 - features switched on; payment methods; Stripe live/test and whether its webhook is set up; Zoom connected; calendar connections and how many are in error; subscription linked and its status
-- problem-log counts for 24 hours and 7 days by area, and (from 2.17.0-beta.5) the newest 25 problem-log entries from the last 14 days, with personal details removed on the site first: email addresses become [email], anything in quotes (such as an email subject that holds a name) becomes “…”, and phone or card numbers (9+ digits) become [number]; only id-style details (booking id, gateway, calendar connection) are kept
+- problem-log counts for 24 hours and 7 days by area, and (from 2.17.0) the newest 25 problem-log entries from the last 14 days, with personal details removed on the site first: email addresses become [email], anything in quotes (such as an email subject that holds a name) becomes “…”, and phone or card numbers (9+ digits) become [number]; only id-style details (booking id, gateway, calendar connection) are kept
 - booking counts: total, created in the last 30 days, upcoming
 
 Never customer names, emails, phone numbers or booking details. After each update of the plugin (or a failed required install) the site also sends `POST /v1/event` with from → to, ok/failed and the error.
