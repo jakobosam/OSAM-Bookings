@@ -8,9 +8,9 @@
  * results (from → to, ok or failed, error message) are sent to {update server}/v1/event straight
  * after an update of this plugin, or when a version OSAM requires couldn't be installed.
  *
- * Only operational information is sent: versions, settings switches, counts. Never customer
- * names, emails, phone numbers, booking details, or the text of problem-log messages other than
- * the latest 'updates' and 'cron' message (those never contain customer details).
+ * Only operational information is sent: versions, settings switches, counts, and the newest
+ * problem-log messages after scrub() has taken out email addresses, quoted text and long numbers.
+ * Never customer names, emails, phone numbers or booking details.
  *
  * Turn off with define( 'OSB_REPORT', false ); in wp-config.php (updates keep working). Nothing is
  * sent either when updates from OSAM are off (OSB_UPDATES false).
@@ -182,7 +182,8 @@ class OSB_Report {
 			'calendar'     => self::part( array( __CLASS__, 'calendar' ) ),
 			'subscription' => self::part( array( __CLASS__, 'subscription' ) ),
 			'problems'     => self::part( array( __CLASS__, 'problems' ) ),
-			'bookings'     => self::part( array( __CLASS__, 'bookings' ) ),
+			'log'          => self::part( array( __CLASS__, 'log_entries' ) ),
+			'bookings'    => self::part( array( __CLASS__, 'bookings' ) ),
 		);
 	}
 
@@ -451,6 +452,63 @@ class OSB_Report {
 			) : null;
 		}
 		return $out;
+	}
+
+	/**
+	 * The newest problem-log entries (last 14 days, at most 25) so they can be read on the update
+	 * dashboard. Personal details are taken out first: email addresses, anything in quotes (email
+	 * subjects can hold a customer's name) and long numbers. Only id-style context keys are kept.
+	 *
+	 * @return array|null
+	 */
+	public static function log_entries() {
+		if ( ! class_exists( 'OSB_Log' ) ) {
+			return null;
+		}
+		$keep  = array( 'booking', 'connection', 'provider', 'gateway', 'event', 'course', 'invoice', 'code', 'status' );
+		$since = time() - 14 * DAY_IN_SECONDS;
+		$out   = array();
+		foreach ( OSB_Log::recent( 25 ) as $e ) {
+			if ( (int) $e['last'] < $since ) {
+				break;
+			}
+			$ctx = array();
+			foreach ( (array) ( $e['ctx'] ?? array() ) as $k => $v ) {
+				if ( in_array( $k, $keep, true ) && is_scalar( $v ) ) {
+					$ctx[ $k ] = self::scrub( self::text( $v, 60 ) );
+				}
+			}
+			$out[] = array(
+				'time'  => (int) $e['time'],
+				'last'  => (int) $e['last'],
+				'level' => 'warning' === $e['level'] ? 'warning' : 'error',
+				'area'  => sanitize_key( (string) $e['area'] ),
+				'count' => max( 1, (int) $e['count'] ),
+				'msg'   => self::scrub( self::text( $e['msg'], 280 ) ),
+				'ctx'   => $ctx,
+			);
+		}
+		return $out;
+	}
+
+	/**
+	 * Take personal details out of a log message.
+	 *
+	 * @param string $s Text.
+	 * @return string
+	 */
+	public static function scrub( $s ) {
+		$s = preg_replace( '/[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}/i', '[email]', (string) $s );
+		$s = preg_replace( '/\x{201C}[^\x{201D}]*\x{201D}|"[^"]*"/u', '“…”', $s );
+		// Phone and card numbers (9+ digits), not dates or versions.
+		$s = preg_replace_callback(
+			'/\+?\d[\d \-]{6,}\d/',
+			static function ( $m ) {
+				return strlen( preg_replace( '/\D/', '', $m[0] ) ) >= 9 ? '[number]' : $m[0];
+			},
+			$s
+		);
+		return (string) $s;
 	}
 
 	/**

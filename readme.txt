@@ -176,6 +176,9 @@ Every email sent about a booking (standard and custom) is listed under "Emails s
 
 == Changelog ==
 
+= 2.17.0-beta.5 =
+* The daily status report now includes the newest problem-log entries (last 14 days, up to 25) so they can be read on the OSAM update dashboard. Email addresses, anything in quotes and phone or card numbers are removed on the site before sending, and only ids (booking, gateway, calendar connection) are kept. `define( 'OSB_REPORT', false );` still switches the report off.
+
 = 2.17.0-beta.4 =
 * New optional feature, Deposits & part payments (off by default, Settings → Features on/off): take a deposit online when people book and collect the rest later. Set it site-wide (fixed per booking, per person, or a percentage) or per service, event, course or resource, and let customers choose to pay in full instead if you like.
 * Bookings with a deposit show as "Deposit paid" with the balance everywhere: admin, calendar, emails ({deposit_paid} and {balance_due}), invoices, My bookings, reports and the CSV export. The "Pay now" link collects the balance online, staff can record it as paid in person, and a new "Balance due" email reminds customers before the visit. Restaurant table deposits show as "Deposit paid" until the bill is settled on the night.

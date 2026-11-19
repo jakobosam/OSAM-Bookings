@@ -32,7 +32,7 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const env = process.env;
 const CONF = {
   repo: String(env.GITHUB_REPO || '').trim(),
@@ -52,7 +52,7 @@ const CONF = {
 
 // Limits on what sites may send (everything from a site is untrusted).
 const LIMIT = {
-  body: 32 * 1024, // raw POST body
+  body: 48 * 1024, // raw POST body
   report: 16 * 1024, // stored report after cleaning
   slugsPerSite: 4,
   reportsPerHour: 6, // per site and plugin
@@ -62,6 +62,7 @@ const LIMIT = {
   updates: 50, // update results kept per site
   daily: 30, // daily summaries kept per site and plugin
   downloads: 20, // downloads kept per site
+  log: 100, // problem-log entries kept per site
 };
 
 /* ------------------------------------------------------------------ helpers */
@@ -411,7 +412,7 @@ const channelFor = (cfg, host) => {
 function historyOf(host) {
   const h = (S.history[host] = S.history[host] || {});
   h.versions = h.versions && typeof h.versions === 'object' ? h.versions : {};
-  for (const k of ['updates', 'daily', 'downloads']) h[k] = Array.isArray(h[k]) ? h[k] : [];
+  for (const k of ['updates', 'daily', 'downloads', 'log']) h[k] = Array.isArray(h[k]) ? h[k] : [];
   return h;
 }
 
@@ -472,6 +473,28 @@ function clean(v, depth = 0) {
     n++;
   }
   return out;
+}
+
+// Problem-log entries from a report, merged into the site's history (same entry = same plugin, start time, area and message).
+const LOG_AREAS = /^[a-z0-9_-]{1,30}$/;
+function noteLog(h, slug, entries) {
+  for (const raw of entries) {
+    if (!raw || typeof raw !== 'object') continue;
+    const e = clean(raw, 2) || {};
+    const time = num(e.time);
+    const last = num(e.last) || time;
+    const msg = typeof e.msg === 'string' ? e.msg.slice(0, 300).trim() : '';
+    if (!time || !msg || last > Date.now() / 1000 + 86400) continue;
+    const area = typeof e.area === 'string' && LOG_AREAS.test(e.area) ? e.area : 'general';
+    const ctx = {};
+    if (e.ctx && typeof e.ctx === 'object' && !Array.isArray(e.ctx)) for (const [k, v] of Object.entries(e.ctx).slice(0, 8)) if (typeof v === 'string' || typeof v === 'number') ctx[k] = String(v).slice(0, 60);
+    const entry = { slug, time, last, level: e.level === 'warning' ? 'warning' : 'error', area, count: Math.max(1, Math.min(1e6, num(e.count) || 1)), msg, ctx };
+    const i = h.log.findIndex((x) => x.slug === slug && x.time === time && x.area === area && x.msg === msg);
+    if (i > -1) h.log[i] = entry;
+    else h.log.push(entry);
+  }
+  h.log.sort((a, b) => b.last - a.last);
+  if (h.log.length > LIMIT.log) h.log.length = LIMIT.log;
 }
 
 // One line per site, plugin and day, for the history table.
@@ -591,7 +614,10 @@ async function receiveReport(req, res) {
   const s = await siteFromBody(req, res, body, 'report');
   if (!s) return;
   if (!body.report || typeof body.report !== 'object' || Array.isArray(body.report)) return send(res, 400, { ok: false, code: 'bad_request', message: 'report must be an object.' });
-  const report = clean(body.report);
+  // The problem log travels with the report but is kept in the site's history, not the report.
+  const entries = Array.isArray(body.report.log) ? body.report.log.slice(0, 40) : [];
+  const report = clean({ ...body.report, log: undefined });
+  delete report.log;
   if (Buffer.byteLength(JSON.stringify(report)) > LIMIT.report) return send(res, 413, { ok: false, code: 'too_large', message: 'Report too large.' });
   const env = report.env && typeof report.env === 'object' ? report.env : {};
   noteSite(s.host, s.slug, s.version, {
@@ -607,6 +633,7 @@ async function receiveReport(req, res) {
   const day = dailySummary(s.slug, s.version, report);
   h.daily = h.daily.filter((d) => !(d.slug === s.slug && d.date === day.date));
   h.daily.push(day);
+  noteLog(h, s.slug, entries);
   const mine = h.daily.filter((d) => d.slug === s.slug);
   if (mine.length > LIMIT.daily) {
     const dropDates = new Set(mine.slice(0, mine.length - LIMIT.daily).map((d) => d.date));
@@ -783,7 +810,8 @@ const num = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : Number(x) 
 const g = (o, ...keys) => keys.reduce((a, k) => (a && typeof a === 'object' ? a[k] : undefined), o);
 
 // Health of one site: level ok | warn | bad | quiet, and the reasons.
-function siteHealth(host, cfg) {
+// With a slug, only that plugin's report and updates count (for its row on the Sites page).
+function siteHealth(host, cfg, only = '') {
   const issues = [];
   const add = (level, msg) => issues.push({ level, msg });
   const site = S.sites[host] || {};
@@ -792,6 +820,7 @@ function siteHealth(host, cfg) {
   const reps = S.reports[host] || {};
   const failed = new Set();
   for (const [slug, entry] of Object.entries(reps)) {
+    if (only && slug !== only) continue;
     const r = (entry && entry.report) || {};
     const tag = slug === 'osam-bookings' ? '' : ` (${slug})`;
     const live = isLiveSite(host, cfg, r);
@@ -823,6 +852,7 @@ function siteHealth(host, cfg) {
   }
   const ups = (S.history[host] && S.history[host].updates) || [];
   for (const slug of new Set(ups.map((u) => u.slug))) {
+    if (only && slug !== only) continue;
     const last = ups.filter((u) => u.slug === slug).pop();
     if (last && !last.ok && !failed.has(slug)) add('bad', `Update ${last.from || '?'} → ${last.to || '?'} failed${slug === 'osam-bookings' ? '' : ` (${slug})`}`);
   }
@@ -836,14 +866,24 @@ function pinFor(cfg, host, slug) {
   return String((pin && typeof pin === 'object' ? pin[slug] : slug === 'osam-bookings' ? pin : '') || '');
 }
 
+// Where a site's version stands against what it should be offered (its pin, or the newest release on its channel).
+// "ahead" = newer than anything released to that channel, e.g. a beta on a stable site, or a release
+// that is still waiting to be signed. Only an older version counts as behind.
+function versionState(version, target) {
+  if (!version || !validVersion(String(version))) return 'unknown';
+  if (!target) return 'current';
+  const c = cmpVersion(version, target);
+  return c === 0 ? 'current' : c > 0 ? 'ahead' : 'behind';
+}
+
 function siteRows(cfg) {
   const rows = [];
   const latest = Object.fromEntries(allSlugs().map((s) => [s, latestOf(s)]));
   for (const [host, site] of Object.entries(S.sites)) {
-    const health = siteHealth(host, cfg);
     const channel = channelFor(cfg, host);
     for (const [slug, p] of Object.entries(site.plugins || (site.slug ? { [site.slug]: { version: site.version, last_seen: site.last_seen } } : {}))) {
       const rep = (S.reports[host] || {})[slug];
+      const health = siteHealth(host, cfg, slug);
       const l = latest[slug] || { stable: '', beta: '' };
       rows.push({
         host,
@@ -858,7 +898,8 @@ function siteRows(cfg) {
         health: health.level,
         issues: health.issues.map((i) => i.msg),
         pin: pinFor(cfg, host, slug),
-        up_to_date: !!p.version && (p.version === l[channel] || p.version === pinFor(cfg, host, slug)),
+        state: versionState(p.version, pinFor(cfg, host, slug) || l[channel]),
+        target: pinFor(cfg, host, slug) || l[channel] || '',
       });
     }
   }
@@ -903,6 +944,19 @@ async function overviewData() {
     problems,
     last_sync: S.lastSync,
     releases,
+    errors_7d: (() => {
+      const e = errorsData(7);
+      return { entries: e.length, errors: e.filter((x) => x.level === 'error').reduce((a, x) => a + x.count, 0), warnings: e.filter((x) => x.level === 'warning').reduce((a, x) => a + x.count, 0), sites: new Set(e.map((x) => x.host)).size };
+    })(),
+    site_mix: (() => {
+      const m = { both: 0, only: {} };
+      for (const site of Object.values(S.sites)) {
+        const k = Object.keys(site.plugins || {});
+        if (k.length > 1) m.both++;
+        else if (k.length === 1) m.only[k[0]] = (m.only[k[0]] || 0) + 1;
+      }
+      return m;
+    })(),
   };
 }
 
@@ -932,6 +986,14 @@ function releasesData() {
   return { releases: out, rollbacks };
 }
 
+// Problem-log entries from every site, newest first.
+function errorsData(days = 30) {
+  const since = Date.now() / 1000 - days * 86400;
+  const out = [];
+  for (const [host, h] of Object.entries(S.history)) for (const e of (h && Array.isArray(h.log) ? h.log : [])) if (e.last >= since) out.push({ host, ...e });
+  return out.sort((a, b) => b.last - a.last);
+}
+
 async function siteData(host) {
   if (!validHost(host) || (!S.sites[host] && !S.reports[host] && !S.history[host])) return null;
   const cfg = await config();
@@ -953,6 +1015,7 @@ async function dashboardJson(name, url) {
   if (name === 'overview') return overviewData();
   if (name === 'sites') return { sites: siteRows(await config()) };
   if (name === 'releases') return releasesData();
+  if (name === 'errors') return { errors: errorsData() };
   if (name === 'config') return { config: await config() };
   const m = name.match(/^sites\/([^/]+)$/);
   if (m) {
@@ -1058,6 +1121,23 @@ const BADGE = { ok: 'OK', warn: 'Check', bad: 'Problem', quiet: 'Quiet' };
 const badge = (level, text) => h`<span class="b b-${['ok', 'warn', 'bad', 'quiet', 'off', 'beta', 'stable'].includes(level) ? level : 'off'}">${text || BADGE[level] || level}</span>`;
 const PLUGIN_NAMES = { 'osam-bookings': 'OSAM Bookings', 'osam-turnstile': 'OSAM Turnstile' };
 const pname = (slug) => PLUGIN_NAMES[slug] || slug;
+const AREA_NAMES = { payments: 'Payments', calendar: 'Calendar sync', email: 'Emails', zoom: 'Zoom', subscription: 'Subscription', updates: 'Updates', cron: 'Scheduled jobs', general: 'General' };
+const aname = (a) => AREA_NAMES[a] || a;
+const VSTATE = { current: ['ok', 'latest'], ahead: ['beta', 'ahead'], behind: ['warn', 'behind'], unknown: ['off', '?'] };
+const vbadge = (st, target) => {
+  const [lvl, txt] = VSTATE[st] || VSTATE.unknown;
+  return h`<span title="${st === 'ahead' ? `Newer than ${target || 'any release'} (the newest release for this channel), e.g. a beta, or a release still waiting to be signed` : target ? `Should be on ${target}` : ''}">${badge(lvl, txt)}</span>`;
+};
+// One problem-log table (site column optional).
+function logTable(ctx, entries, withSite) {
+  if (!entries.length) return h`<div class="card">${badge('ok', 'All clear')} No problems logged.</div>`;
+  return h`<div class="tw"><table class="log"><thead><tr><th>Last seen</th>${withSite ? h`<th>Site</th>` : ''}<th>Level</th><th>Area</th><th>Message</th><th>Times</th></tr></thead><tbody>
+${entries.map((e) => h`<tr data-search="${`${e.host || ''} ${e.area} ${e.msg}`.toLowerCase()}" data-level="${e.level}" data-area="${e.area}" data-plugin="${e.slug}"><td data-s="${e.last}"><time title="${fmtDate(e.last * 1000)}">${ago(e.last * 1000)}</time>${e.count > 1 && e.time !== e.last ? h`<div class="small muted">first ${ago(e.time * 1000)}</div>` : ''}</td>
+${withSite ? h`<td><a href="${ctx.base}/site/${encodeURIComponent(e.host)}">${e.host}</a>${e.slug !== 'osam-bookings' ? h`<div class="small muted">${pname(e.slug)}</div>` : ''}</td>` : ''}
+<td>${badge(e.level === 'warning' ? 'warn' : 'bad', e.level === 'warning' ? 'Warning' : 'Error')}</td><td>${aname(e.area)}</td>
+<td>${e.msg}${Object.keys(e.ctx || {}).length ? h`<div class="small muted">${Object.entries(e.ctx).map(([k, v]) => `${k} ${v}`).join(' · ')}</div>` : ''}</td><td>${e.count}</td></tr>`)}
+</tbody></table></div>`;
+}
 const safeHref = (u) => (/^https?:\/\/[^\s"'<>]+$/i.test(String(u || '')) ? String(u) : '');
 
 const CSS = `
@@ -1079,6 +1159,7 @@ table.kv th{text-transform:none;letter-spacing:0;font-size:13px;width:1%;white-s
 ul.issues{margin:4px 0 0;padding-left:18px}.flash{padding:10px 14px;border-radius:8px;background:var(--okbg);color:var(--ok);margin-bottom:12px}.flash.err{background:var(--badbg);color:var(--bad)}
 form.inline{display:inline}button,.btn{font:inherit;padding:7px 14px;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 input,select{font:inherit;padding:7px 9px;border-radius:7px;border:1px solid var(--line);background:var(--card);color:var(--fg);max-width:100%}
+nav.tabs{flex:none;margin:0 0 10px;border-bottom:1px solid var(--line);padding-bottom:6px}nav.tabs a{font-size:14px}
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center}.filters input[type=search]{flex:1;min-width:180px}
 pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;overflow-x:auto;font-size:13px;margin:0}
 progress{width:100%;height:8px}.login{max-width:380px;margin:12vh auto;padding:0 16px}.login input{width:100%;margin:8px 0 12px}
@@ -1107,6 +1188,7 @@ function sendHtml(res, code, ctx, title, body, headers = {}) {
     ? h`<nav>${[
         ['', 'Overview'],
         ['/sites', 'Sites'],
+        ['/errors', 'Errors'],
         ['/releases', 'Releases'],
         ['/config', 'Config'],
       ].map(([p, t]) => h`<a href="${ctx.base}${p}" class="${ctx.active === t ? 'on' : ''}">${t}</a>`)}</nav>
@@ -1176,7 +1258,7 @@ async function overviewPage(res, ctx, url) {
   const pluginCards = Object.entries(o.plugins).map(
     ([slug, p]) => h`<div class="card"><h3>${pname(slug)}</h3>
 <div class="small muted">Latest stable <b>${p.latest_stable || '—'}</b>${p.latest_beta && p.latest_beta !== p.latest_stable ? h` · beta <b>${p.latest_beta}</b>` : ''}</div>
-<p><span class="stat">${p.on_latest_stable}</span> <span class="muted">of ${p.total} on latest stable</span>${p.on_latest_beta ? h` · ${p.on_latest_beta} on beta` : ''}</p>
+<p><span class="stat">${p.on_latest_stable}</span> <span class="muted">of <a href="${ctx.base}/sites?plugin=${encodeURIComponent(slug)}">${p.total} site${p.total === 1 ? '' : 's'}</a> on latest stable</span>${p.on_latest_beta ? h` · ${p.on_latest_beta} on beta` : ''}</p>
 <progress max="${p.total || 1}" value="${p.on_latest_stable}"></progress>
 <table class="kv">${p.versions.map((v) => h`<tr><th><a href="${ctx.base}/sites?plugin=${encodeURIComponent(slug)}&amp;q=${encodeURIComponent(v.version)}">${v.version}</a> ${v.version === p.latest_stable ? badge('stable', 'latest') : v.version === p.latest_beta ? badge('beta', 'beta') : ''}</th><td>${v.sites} site${v.sites === 1 ? '' : 's'}</td></tr>`)}</table></div>`
   );
@@ -1188,6 +1270,8 @@ async function overviewPage(res, ctx, url) {
     h`${flash(url)}<h1>Overview</h1>
 <div class="grid">
 <div class="card"><h3>Sites</h3><div class="stat">${o.sites.total}</div><div class="small">${o.sites.seen_24h} seen in 24h · ${o.sites.seen_7d} in 7 days · <a href="${ctx.base}/sites?health=quiet">${o.sites.quiet} quiet &gt; 7 days</a></div><div class="small muted">${o.reports_24h} status reports in the last 24h</div></div>
+<div class="card"><h3>Problem log (7 days)</h3><div class="stat"><a href="${ctx.base}/errors">${o.errors_7d.errors}</a></div><div class="small">errors · ${o.errors_7d.warnings} warnings · from ${o.errors_7d.sites} site${o.errors_7d.sites === 1 ? '' : 's'}</div><div class="small"><a href="${ctx.base}/errors">Open the error log →</a></div></div>
+<div class="card"><h3>Sites by plugin</h3><table class="kv">${Object.entries(o.site_mix.only).map(([slug, n]) => h`<tr><th><a href="${ctx.base}/sites?plugin=${encodeURIComponent(slug)}">${pname(slug)} only</a></th><td>${n}</td></tr>`)}<tr><th><a href="${ctx.base}/sites?plugin=both">Both plugins</a></th><td>${o.site_mix.both}</td></tr></table></div>
 <div class="card"><h3>Channels</h3><table class="kv"><tr><th>stable</th><td>${o.channels.stable}</td></tr><tr><th>beta</th><td>${o.channels.beta}</td></tr></table></div>
 <div class="card"><h3>Last GitHub sync</h3>${ls ? h`<div>${badge(ls.ok ? 'ok' : 'bad', ls.ok ? 'OK' : 'Failed')} ${when(ls.at)}</div>${ls.message ? h`<div class="small">${ls.message}</div>` : ''}${ls.added && ls.added.length ? h`<div class="small">Added: ${ls.added.join(', ')}</div>` : ''}${ls.skipped && ls.skipped.length ? h`<div class="small muted">Skipped: ${ls.skipped.join('; ')}</div>` : ''}` : h`<div class="muted">Not synced yet</div>`}
 <form method="post" action="${ctx.base}/sync"><input type="hidden" name="csrf" value="${ctx.csrf}"><p><button type="submit" class="primary">Sync now</button></p></form></div>
@@ -1202,34 +1286,75 @@ ${o.problems.length ? h`<div class="tw"><table><thead><tr><th>Site</th><th>Healt
 async function sitesPage(res, ctx, url) {
   const cfg = await config();
   const rows = siteRows(cfg);
-  const f = { q: String(url.searchParams.get('q') || '').slice(0, 100), plugin: String(url.searchParams.get('plugin') || ''), health: String(url.searchParams.get('health') || ''), channel: String(url.searchParams.get('channel') || '') };
+  const f = { q: String(url.searchParams.get('q') || '').slice(0, 100), plugin: String(url.searchParams.get('plugin') || ''), health: String(url.searchParams.get('health') || ''), channel: String(url.searchParams.get('channel') || ''), state: String(url.searchParams.get('state') || '') };
   const slugs = allSlugs();
+  const pluginsOf = {};
+  for (const r of rows) (pluginsOf[r.host] = pluginsOf[r.host] || []).push(r);
+  const both = new Set(Object.entries(pluginsOf).filter(([, l]) => l.length > 1).map(([hst]) => hst));
   const sel = (name, label, opts) => h`<select name="${name}" id="f-${name}" aria-label="${label}"><option value="">${label}: all</option>${opts.map(([v, t]) => h`<option value="${v}"${f[name] === v ? raw(' selected') : ''}>${t}</option>`)}</select>`;
-  const search = (r) => `${r.host} ${r.title} ${r.slug} ${r.version} ${r.wp} ${r.php} ${r.issues.join(' ')}`.toLowerCase();
+  const search = (r) => `${r.host} ${r.title} ${r.version} ${r.wp} ${r.php} ${r.issues.join(' ')}`.toLowerCase();
+  const onlyBoth = f.plugin === 'both';
   // Without JavaScript the same filters are applied here.
-  const shown = rows.filter((r) => (!f.q || search(r).includes(f.q.toLowerCase())) && (!f.plugin || r.slug === f.plugin) && (!f.health || r.health === f.health) && (!f.channel || r.channel === f.channel));
-  const js = `(function(){var t=document.getElementById('sites');if(!t)return;var b=t.tBodies[0],rows=[].slice.call(b.rows),q=document.getElementById('f-q'),c=document.getElementById('count');
-var fs=['plugin','health','channel'].map(function(n){return document.getElementById('f-'+n)});
-function apply(){var s=q.value.toLowerCase(),n=0;rows.forEach(function(r){var ok=(!s||r.getAttribute('data-search').indexOf(s)>-1);fs.forEach(function(f){if(f.value&&r.getAttribute('data-'+f.name)!==f.value)ok=false});r.hidden=!ok;if(ok)n++});c.textContent=n;}
+  const pass = (r) => (!f.q || search(r).includes(f.q.toLowerCase())) && (!f.health || r.health === f.health) && (!f.channel || r.channel === f.channel) && (!f.state || r.state === f.state) && (!onlyBoth || both.has(r.host));
+  const shownSlugs = slugs.filter((sl) => !f.plugin || onlyBoth || f.plugin === sl);
+  const tabs = [['', `All (${Object.keys(pluginsOf).length} sites)`], ...slugs.map((sl) => [sl, `${pname(sl)} (${rows.filter((r) => r.slug === sl).length})`]), ['both', `Both plugins (${both.size})`]];
+  const js = `(function(){var ts=[].slice.call(document.querySelectorAll('table.sites'));if(!ts.length)return;var q=document.getElementById('f-q');
+var fs=['health','channel','state'].map(function(n){return document.getElementById('f-'+n)});
+function apply(){var s=q.value.toLowerCase();ts.forEach(function(t){var n=0;[].forEach.call(t.tBodies[0].rows,function(r){var ok=(!s||r.getAttribute('data-search').indexOf(s)>-1);fs.forEach(function(f){if(f.value&&r.getAttribute('data-'+f.name)!==f.value)ok=false});if(r.getAttribute('data-out'))ok=false;r.hidden=!ok;if(ok)n++});var c=document.getElementById('c-'+t.id);if(c)c.textContent=n;});}
 document.getElementById('filters').addEventListener('submit',function(e){e.preventDefault();apply()});q.addEventListener('input',apply);fs.forEach(function(f){f.addEventListener('change',apply)});
-var dir={};[].forEach.call(t.tHead.rows[0].cells,function(th,i){if(!th.getAttribute('data-k'))return;th.addEventListener('click',function(){dir[i]=-(dir[i]||-1);rows.sort(function(a,b){var x=a.cells[i].getAttribute('data-s')||a.cells[i].textContent,y=b.cells[i].getAttribute('data-s')||b.cells[i].textContent;return dir[i]*x.localeCompare(y,undefined,{numeric:true,sensitivity:'base'})});rows.forEach(function(r){b.appendChild(r)})})});
-rows.forEach(function(r){r.hidden=false});apply();})();`;
+ts.forEach(function(t){var b=t.tBodies[0],dir={};[].forEach.call(t.tHead.rows[0].cells,function(th,i){if(!th.getAttribute('data-k'))return;th.addEventListener('click',function(){var rows=[].slice.call(b.rows);dir[i]=-(dir[i]||-1);rows.sort(function(a,c){var x=a.cells[i].getAttribute('data-s')||a.cells[i].textContent,y=c.cells[i].getAttribute('data-s')||c.cells[i].textContent;return dir[i]*x.localeCompare(y,undefined,{numeric:true,sensitivity:'base'})});rows.forEach(function(r){b.appendChild(r)})})})});
+apply();})();`;
+  const section = (slug) => {
+    const list = rows.filter((r) => r.slug === slug);
+    const shownN = list.filter(pass).length;
+    const other = (r) => (pluginsOf[r.host] || []).filter((x) => x.slug !== slug);
+    return h`<h2>${pname(slug)} <span class="muted small"><span id="c-t-${slug}">${shownN}</span> of ${list.length} site${list.length === 1 ? '' : 's'}</span></h2>
+<div class="tw"><table class="sites" id="t-${slug}"><thead><tr><th data-k="1">Site</th><th data-k="1">Version</th><th data-k="1">Channel</th><th data-k="1" class="hide-s">WP</th><th data-k="1" class="hide-s">PHP</th><th data-k="1">Last seen</th><th data-k="1">Health</th></tr></thead><tbody>
+${list.map((r) => {
+  const out = onlyBoth && !both.has(r.host);
+  return h`<tr data-search="${search(r)}" data-health="${r.health}" data-channel="${r.channel}" data-state="${r.state}"${out ? raw(' data-out="1"') : ''}${pass(r) ? '' : raw(' hidden')}>
+<td data-s="${r.host}"><a href="${ctx.base}/site/${encodeURIComponent(r.host)}">${r.host}</a>${r.title ? h`<div class="small muted">${r.title}</div>` : ''}${other(r).length ? h`<div class="small muted">Also: ${other(r).map((x) => `${pname(x.slug)} ${x.version}`).join(', ')}</div>` : ''}</td>
+<td data-s="${r.version}">${r.version} ${vbadge(r.state, r.target)}${r.pin ? h` ${badge('off', 'pinned')}` : ''}</td><td>${badge(r.channel === 'beta' ? 'beta' : 'off', r.channel)}</td><td class="hide-s">${r.wp}</td><td class="hide-s">${r.php}</td>
+<td data-s="${r.last_seen || ''}">${when(r.last_seen)}</td><td data-s="${{ bad: 0, warn: 1, quiet: 2, ok: 3 }[r.health]}" title="${r.issues.join(' · ')}">${badge(r.health)}${r.issues.length ? h`<div class="small muted">${r.issues[0]}${r.issues.length > 1 ? ` +${r.issues.length - 1} more` : ''}</div>` : ''}</td></tr>`;
+})}</tbody></table></div>`;
+  };
+  const tabLink = (v) => {
+    const qs = new URLSearchParams({ ...(v ? { plugin: v } : {}), ...(f.health ? { health: f.health } : {}), ...(f.channel ? { channel: f.channel } : {}), ...(f.state ? { state: f.state } : {}) }).toString();
+    return `${ctx.base}/sites${qs ? `?${qs}` : ''}`;
+  };
   sendHtml(
     res,
     200,
     { ...ctx, active: 'Sites' },
     'Sites',
-    h`<h1>Sites <span class="muted small"><span id="count">${shown.length}</span> of ${rows.length} rows</span></h1>
-<form class="filters" id="filters" method="get" action="${ctx.base}/sites"><input type="search" name="q" id="f-q" placeholder="Search site, title, version, problem…" value="${f.q}">
-${sel('plugin', 'Plugin', slugs.map((s) => [s, pname(s)]))}${sel('health', 'Health', ['ok', 'warn', 'bad', 'quiet'].map((s) => [s, BADGE[s]]))}${sel('channel', 'Channel', [['stable', 'stable'], ['beta', 'beta']])}<button type="submit">Filter</button></form>
-<div class="tw"><table id="sites"><thead><tr><th data-k="1">Site</th><th data-k="1">Plugin</th><th data-k="1">Version</th><th data-k="1">Channel</th><th data-k="1" class="hide-s">WP</th><th data-k="1" class="hide-s">PHP</th><th data-k="1">Last seen</th><th data-k="1">Health</th></tr></thead><tbody>
-${rows.map((r) => {
-  const hide = !shown.includes(r);
-  return h`<tr data-search="${search(r)}" data-plugin="${r.slug}" data-health="${r.health}" data-channel="${r.channel}"${hide ? raw(' hidden') : ''}>
-<td data-s="${r.host}"><a href="${ctx.base}/site/${encodeURIComponent(r.host)}">${r.host}</a>${r.title ? h`<div class="small muted">${r.title}</div>` : ''}</td>
-<td>${pname(r.slug)}</td><td data-s="${r.version}">${r.version} ${r.pin ? badge('off', 'pinned') : ''}${r.up_to_date ? '' : badge('warn', 'behind')}</td><td>${r.channel}</td><td class="hide-s">${r.wp}</td><td class="hide-s">${r.php}</td>
-<td data-s="${r.last_seen || ''}">${when(r.last_seen)}</td><td data-s="${{ bad: 0, warn: 1, quiet: 2, ok: 3 }[r.health]}" title="${r.issues.join(' · ')}">${badge(r.health)}</td></tr>`;
-})}</tbody></table></div>
+    h`<h1>Sites</h1>
+<nav class="tabs">${tabs.map(([v, t]) => h`<a href="${tabLink(v)}" class="${f.plugin === v ? 'on' : ''}">${t}</a>`)}</nav>
+<form class="filters" id="filters" method="get" action="${ctx.base}/sites">${f.plugin ? h`<input type="hidden" name="plugin" value="${f.plugin}">` : ''}<input type="search" name="q" id="f-q" placeholder="Search site, title, version, problem…" value="${f.q}">
+${sel('health', 'Health', ['ok', 'warn', 'bad', 'quiet'].map((x) => [x, BADGE[x]]))}${sel('channel', 'Channel', [['stable', 'stable'], ['beta', 'beta']])}${sel('state', 'Version', [['behind', 'behind'], ['current', 'latest'], ['ahead', 'ahead']])}<button type="submit">Filter</button></form>
+<p class="small muted">Version: “latest” = on the newest release for the site’s channel (or its pin). “ahead” = newer than that, e.g. a beta on a stable site, or a release still waiting to be signed; that’s fine. Only “behind” needs an update.</p>
+${shownSlugs.length ? shownSlugs.map(section) : h`<div class="card muted">No sites yet.</div>`}
+<script nonce="${ctx.nonce}">${raw(js)}</script>`
+  );
+}
+
+async function errorsPage(res, ctx, url) {
+  const all = errorsData(30);
+  const areas = [...new Set(all.map((e) => e.area))].sort();
+  const q = String(url.searchParams.get('q') || '').slice(0, 100);
+  const js = `(function(){var t=document.querySelector('table.log');if(!t)return;var q=document.getElementById('f-q'),c=document.getElementById('count'),fs=['level','area'].map(function(n){return document.getElementById('f-'+n)});
+function apply(){var s=q.value.toLowerCase(),n=0;[].forEach.call(t.tBodies[0].rows,function(r){var ok=(!s||r.getAttribute('data-search').indexOf(s)>-1);fs.forEach(function(f){if(f.value&&r.getAttribute('data-'+f.name)!==f.value)ok=false});r.hidden=!ok;if(ok)n++});c.textContent=n;}
+q.addEventListener('input',apply);fs.forEach(function(f){f.addEventListener('change',apply)});document.getElementById('filters').addEventListener('submit',function(e){e.preventDefault();apply()});apply();})();`;
+  sendHtml(
+    res,
+    200,
+    { ...ctx, active: 'Errors' },
+    'Errors',
+    h`<h1>Error log <span class="muted small"><span id="count">${all.length}</span> entries, last 30 days</span></h1>
+<p class="small muted">Problems the sites logged (payments, calendar sync, emails, Zoom, subscription, updates, scheduled jobs), sent with each site’s daily report. Email addresses, quoted text and long numbers are removed on the site before sending. Repeats of the same problem are counted on one line.</p>
+<form class="filters" id="filters" method="get" action="${ctx.base}/errors"><input type="search" name="q" id="f-q" placeholder="Search site or message…" value="${q}">
+<select id="f-level" aria-label="Level"><option value="">Level: all</option><option value="error">Errors</option><option value="warning">Warnings</option></select>
+<select id="f-area" aria-label="Area"><option value="">Area: all</option>${areas.map((a) => h`<option value="${a}">${aname(a)}</option>`)}</select></form>
+${logTable(ctx, all, true)}
 <script nonce="${ctx.nonce}">${raw(js)}</script>`
   );
 }
@@ -1261,9 +1386,11 @@ ${d.health.issues.length ? h`<div class="card"><h3>Needs attention</h3><ul class
 <h2>Plugins</h2><div class="tw"><table><thead><tr><th>Plugin</th><th>Version</th><th>Latest for channel</th><th>Channel</th><th>Pin</th><th>Last update check</th><th>Last report</th></tr></thead><tbody>
 ${plugins.map(([slug, p]) => {
   const l = d.latest[slug] || {};
-  return h`<tr><td>${pname(slug)}</td><td>${p.version}</td><td>${l[d.channel] || '—'}</td><td>${d.channel}</td><td>${pin(slug) || '—'}</td><td>${when(p.last_seen)}</td><td>${when(p.last_report)}</td></tr>`;
+  const target = pin(slug) || l[d.channel] || '';
+  return h`<tr><td>${pname(slug)}</td><td>${p.version} ${vbadge(versionState(p.version, target), target)}</td><td>${l[d.channel] || '—'}</td><td>${d.channel}</td><td>${pin(slug) || '—'}</td><td>${when(p.last_seen)}</td><td>${when(p.last_report)}</td></tr>`;
 })}</tbody></table></div>
 <p class="small muted">WordPress ${d.site.wp || '?'} · PHP ${d.site.php || '?'} · ${d.live ? 'treated as a live site' : 'treated as a staging/test site'}</p>
+<h2>Error log <span class="muted small">last 30 days</span></h2>${logTable(ctx, (h2.log || []).filter((e) => e.last >= Date.now() / 1000 - 30 * 86400), false)}
 ${reportCards.length ? reportCards : h`<h2>Status report</h2><div class="card muted">No status report yet (the site runs a version before 2.17, or has OSB_REPORT off).</div>`}
 <h2>Version timeline</h2>${timeline.length ? h`<div class="tw"><table><thead><tr><th>First seen</th><th>Plugin</th><th>Version</th></tr></thead><tbody>${timeline.map((t) => h`<tr><td>${fmtDate(t.first_seen)}</td><td>${pname(t.slug)}</td><td>${t.version}</td></tr>`)}</tbody></table></div>` : h`<div class="card muted">Nothing yet.</div>`}
 <h2>Update results</h2>${h2.updates && h2.updates.length ? h`<div class="tw"><table><thead><tr><th>When</th><th>Plugin</th><th>From → to</th><th>Result</th><th>Error</th></tr></thead><tbody>${h2.updates.slice().reverse().map((u) => h`<tr><td>${fmtDate(u.at)}</td><td>${pname(u.slug)}</td><td>${u.from || '?'} → ${u.to || '?'}${u.forced ? h` ${badge('warn', 'required')}` : ''}</td><td>${badge(u.ok ? 'ok' : 'bad', u.ok ? 'OK' : 'Failed')}</td><td>${u.error || ''}</td></tr>`)}</tbody></table></div>` : h`<div class="card muted">No update results reported yet.</div>`}
@@ -1393,6 +1520,7 @@ async function dashboard(req, res, url, route, prefix) {
 
   if (route === '/dashboard') return overviewPage(res, ctx, url);
   if (route === '/dashboard/sites') return sitesPage(res, ctx, url);
+  if (route === '/dashboard/errors') return errorsPage(res, ctx, url);
   if (route === '/dashboard/releases') return releasesPage(res, ctx);
   if (route === '/dashboard/config') return configPage(res, ctx);
   const m = route.match(/^\/dashboard\/site\/([^/]+)$/);

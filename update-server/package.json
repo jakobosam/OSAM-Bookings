@@ -1,6 +1,6 @@
 {
   "name": "osam-update-server",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Serves signed OSAM Bookings releases from GitHub to client sites, with a status dashboard (updates.osamweb.com).",
   "main": "app.js",

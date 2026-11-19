@@ -94,8 +94,12 @@ Test on one site first: update it, then in **OSAM Bookings → Settings → Gene
 
 Open `https://updates.osamweb.com/dashboard` and log in with the **ADMIN_TOKEN** (works on a phone too).
 
-- **Overview** — how many sites (seen in the last 24 hours / 7 days / quiet for more than 7 days), versions in use per plugin and how many are on the latest stable or beta, channels, every site with a problem and why, the last GitHub sync with a **Sync now** button, and the latest releases.
-- **Sites** — one row per site and plugin: version (marked *behind* or *pinned*), channel, WordPress, PHP, last seen and a health badge (OK / Check / Problem / Quiet). Search, filter by plugin, health or channel, and click a column heading to sort.
+- **Overview** — problem-log totals for 7 days (links to Errors), sites by plugin (Bookings only / Turnstile only / both), how many sites (seen in the last 24 hours / 7 days / quiet for more than 7 days), versions in use per plugin and how many are on the latest stable or beta, channels, every site with a problem and why, the last GitHub sync with a **Sync now** button, and the latest releases.
+- **Sites** — tabs for **All**, **OSAM Bookings**, **OSAM Turnstile** and **Both plugins**, with a separate table per plugin (a site with both shows "Also: …" under its name). Each row: version with *latest* / *behind* / *ahead* (and *pinned*), channel, WordPress, PHP, last seen and a health badge for that plugin (OK / Check / Problem / Quiet). Search, filter by health, channel or version state, and click a column heading to sort.
+  - *latest*: on the newest release for the site's channel (or its pin). A beta-channel site on the newest beta is *latest*, not behind.
+  - *ahead*: newer than that — e.g. a beta on a stable-channel site, or a release that is still waiting for signing approval. Nothing to do.
+  - *behind*: older; the site will be offered the update.
+- **Errors** — the problem log from every site for the last 30 days, newest first (payments, calendar sync, emails, Zoom, subscription, updates, scheduled jobs): when, site, error or warning, area, message, how many times. Search and filter by level or area. Each site page has the same log for that site.
 - **Site page** (click a site) — everything the site reported, what needs attention, the version timeline (when each version was first seen), update results (from → to, OK or failed, the error), the last 30 daily summaries, recent downloads and the site's `config.json` entry (read-only).
 - **Releases** — every release per plugin: channel, published date, how many sites run it, download count; plus the rollbacks.
 - **Config** — `config.json` (read-only; edit it in File Manager as before), which environment variables are set (not their values), and data file sizes.
@@ -113,22 +117,22 @@ OSAM Bookings 2.17+ sends a small JSON report once a day (`POST /v1/report`, abo
 - updates: auto-updates on/off, last required-version install (from → to, ok, error), withdrawn versions, last update check
 - scheduled jobs: state (ok / server / visitor / late / never), last run, whether a server cron job runs them
 - features switched on; payment methods; Stripe live/test and whether its webhook is set up; Zoom connected; calendar connections and how many are in error; subscription linked and its status
-- problem-log counts for 24 hours and 7 days by area, plus only the latest **updates** and **cron** messages
+- problem-log counts for 24 hours and 7 days by area, and (from 2.17.0-beta.5) the newest 25 problem-log entries from the last 14 days, with personal details removed on the site first: email addresses become [email], anything in quotes (such as an email subject that holds a name) becomes “…”, and phone or card numbers (9+ digits) become [number]; only id-style details (booking id, gateway, calendar connection) are kept
 - booking counts: total, created in the last 30 days, upcoming
 
-Never customer names, emails, phone numbers, booking details, or messages from other problem-log areas. After each update of the plugin (or a failed required install) the site also sends `POST /v1/event` with from → to, ok/failed and the error.
+Never customer names, emails, phone numbers or booking details. After each update of the plugin (or a failed required install) the site also sends `POST /v1/event` with from → to, ok/failed and the error.
 
 **To switch it off on a site**: add `define( 'OSB_REPORT', false );` to its `wp-config.php`. Updates keep working; the site just stops sending reports (it still appears in the dashboard from its hourly update checks). Sites with `OSB_UPDATES` false send nothing at all.
 
-The server treats reports as untrusted: bodies over 32 KB are refused, every value is trimmed (strings to 300 characters, limited nesting, keys and list lengths), a stored report is at most 16 KB, each site can send 6 reports per plugin and 20 update results per hour, and each IP 120 requests per 10 minutes. If `UPDATE_KEY` is set, reports need it too. `allowed_sites` applies as well. Without UPDATE_KEY anyone could send a report pretending to be a site — it can only change what the dashboard shows for that site, never what is installed anywhere.
+The server treats reports as untrusted: bodies over 48 KB are refused, every value is trimmed (strings to 300 characters, limited nesting, keys and list lengths), a stored report is at most 16 KB (the problem-log entries are kept separately, 100 per site), each site can send 6 reports per plugin and 20 update results per hour, and each IP 120 requests per 10 minutes. If `UPDATE_KEY` is set, reports need it too. `allowed_sites` applies as well. Without UPDATE_KEY anyone could send a report pretending to be a site — it can only change what the dashboard shows for that site, never what is installed anywhere.
 
 Data files stay bounded: at most `MAX_SITES` sites (default 1000; the longest-silent are dropped first), 40 version-timeline entries per plugin, 50 update results, 30 daily summaries per plugin and 20 downloads per site.
 
-## Updating this server (e.g. to 1.2.0)
+## Updating this server (e.g. to 1.3.0)
 
 1. **File Manager** → `osam-update-server` → **Upload** the new `osam-update-server.zip` → right-click → **Extract** → overwrite. You should see the new `app.js`, `package.json` and `README.md` in the folder. Don't delete the `data` folder — it holds the cached releases, rollbacks, site list, reports and `config.json`.
 2. **Setup Node.js App** → the app → **Restart**. Nothing to install; no new environment variables are needed (optional: `MAX_SITES`).
-3. Check `https://updates.osamweb.com/` shows `"version":"1.2.0"`, then open `https://updates.osamweb.com/dashboard` and log in with ADMIN_TOKEN.
+3. Check `https://updates.osamweb.com/` shows `"version":"1.3.0"`, then open `https://updates.osamweb.com/dashboard` and log in with ADMIN_TOKEN.
 4. Sites start sending reports once they run OSAM Bookings 2.17 (Turnstile with its next release); until then the dashboard shows them from their hourly update checks.
 
 ## Endpoints
@@ -142,7 +146,7 @@ Data files stay bounded: at most `MAX_SITES` sites (default 1000; the longest-si
 | `POST /v1/webhook/github` | GitHub | triggers a sync (HMAC-checked) |
 | `GET /v1/sync`, `GET /v1/status` | admin token | sync now / releases, rollbacks, sites (unchanged) |
 | `POST /v1/rollbacks` | admin token + signature | stores a signed rollback (sent by the Rollback workflow) |
-| `GET /v1/dashboard/overview`, `/v1/dashboard/sites`, `/v1/dashboard/sites/{host}`, `/v1/dashboard/releases`, `/v1/dashboard/config` | admin token or dashboard session | the dashboard's data as JSON |
+| `GET /v1/dashboard/overview`, `/v1/dashboard/sites`, `/v1/dashboard/sites/{host}`, `/v1/dashboard/releases`, `/v1/dashboard/errors`, `/v1/dashboard/config` | admin token or dashboard session | the dashboard's data as JSON |
 | `GET /dashboard…`, `POST /dashboard/login`, `/dashboard/logout`, `/dashboard/sync` | ADMIN_TOKEN login | the dashboard |
 
 New files in `data/`: `reports.json` (latest report per site and plugin), `history.json` (version timeline, update results, daily summaries, downloads per site), `downloads.json` (download counts per release).

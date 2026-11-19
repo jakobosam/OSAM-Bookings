@@ -216,6 +216,15 @@ $log = OSB_Log::recent( 5, 'email' );
 ok( 1 === count( $log ) && false !== strpos( $log[0]['msg'], 'SMTP connect() failed' ), 'a failed wp_mail() is logged under Emails' );
 $c = OSB_Log::counts( time() - HOUR_IN_SECONDS );
 ok( 3 === $c['total'] && 3 === $c['errors'] && 2 === $c['by_area']['payments'] && 1 === $c['by_area']['email'], 'OSB_Log::counts adds them up (' . wp_json_encode( $c ) . ')' );
+// The daily report carries the entries for the update dashboard, with personal details taken out.
+OSB_Log::error( 'email', 'Couldn’t send “Booking for Jane Smith” to jane.smith@example.com, call +44 7700 900123 on 2026-11-19 (v2.17.0)', array( 'booking' => $id, 'email' => 'jane@example.com' ) );
+$entries = OSB_Report::log_entries();
+$top     = $entries[0];
+ok( 3 === count( $entries ) && 'email' === $top['area'] && 'error' === $top['level'], 'the report sends the newest log entries (' . count( $entries ) . ')' );
+ok( false === strpos( $top['msg'], 'Jane' ) && false === strpos( $top['msg'], '@' ) && false === strpos( $top['msg'], '900123' ), 'names in quotes, email addresses and phone numbers are removed: ' . $top['msg'] );
+ok( false !== strpos( $top['msg'], '2026-11-19' ) && false !== strpos( $top['msg'], 'v2.17.0' ), 'dates and versions are kept' );
+ok( isset( $top['ctx']['booking'] ) && ! isset( $top['ctx']['email'] ), 'only id-style context is sent' );
+ok( isset( OSB_Report::build()['log'] ), 'build() includes the log' );
 
 /* ---------------------------------------------------------------- Scheduled jobs */
 delete_option( OSB_Cron::BEAT );

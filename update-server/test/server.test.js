@@ -303,7 +303,7 @@ test('reports: a valid report is stored with a daily summary and version timelin
 });
 
 test('reports: oversized, malformed and invalid ones are refused', async () => {
-  assert.equal((await report('big.test', '2.16.0', sampleReport({ padding: 'x'.repeat(40 * 1024) }))).status, 413);
+  assert.equal((await report('big.test', '2.16.0', sampleReport({ padding: 'x'.repeat(60 * 1024) }))).status, 413);
   const many = {};
   for (let i = 0; i < 59; i++) many[`k${i}`] = 'y'.repeat(200);
   assert.equal((await report('big2.test', '2.16.0', { a: many, b: many })).status, 413, 'too big after cleaning');
@@ -440,6 +440,60 @@ test('dashboard: everything a site sent is HTML-escaped', async () => {
     assert.ok(!html.includes('href="javascript:'), `${p}: javascript link`);
     if (p !== '/dashboard') assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), `${p}: escaped title shown`);
   }
+});
+
+test('problem log: entries are kept per site, merged, escaped and listed on the errors page', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const evil = '<script>alert(9)</script>';
+  const entry = (over = {}) => ({ time: now - 3600, last: now - 60, level: 'error', area: 'payments', count: 2, msg: 'Stripe: API error — Your card was declined.', ctx: { booking: '12', gateway: 'stripe' }, ...over });
+  const rep = (log) => sampleReport({ log });
+  assert.equal((await report('logs.test', '2.16.0', rep([entry(), entry({ time: now - 7200, last: now - 7200, level: 'warning', area: 'calendar', count: 1, msg: evil })]))).status, 202);
+  // The next day's report repeats the first entry with a higher count: still one line.
+  assert.equal((await report('logs.test', '2.16.0', rep([entry({ count: 5, last: now - 30 }), { nonsense: true }, 'x']))).status, 202);
+  const d = await siteJson('logs.test');
+  assert.equal(d.history.log.length, 2);
+  assert.equal(d.history.log[0].count, 5);
+  assert.equal(d.history.log[0].ctx.booking, '12');
+  assert.equal(d.reports['osam-bookings'].report.log, undefined, 'log is kept in history, not the report');
+  const all = (await (await fetch(`${base}/v1/dashboard/errors`, { headers: admin })).json()).errors;
+  assert.ok(all.some((e) => e.host === 'logs.test' && e.area === 'calendar'));
+  const { cookie } = await login();
+  for (const p of ['/dashboard/errors', '/dashboard/site/logs.test']) {
+    const res = await page(p, cookie.value);
+    assert.equal(res.status, 200, p);
+    const html = await res.text();
+    assert.ok(html.includes('Your card was declined'), `${p}: message shown`);
+    assert.ok(!html.includes(evil) && html.includes('&lt;script&gt;alert(9)'), `${p}: escaped`);
+  }
+  const ov = await (await fetch(`${base}/v1/dashboard/overview`, { headers: admin })).json();
+  assert.ok(ov.errors_7d.errors >= 5 && ov.errors_7d.sites >= 1, JSON.stringify(ov.errors_7d));
+});
+
+test('versions: a beta on the beta channel is not "behind"; newer = ahead; older = behind', async () => {
+  fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({ default_channel: 'stable', allowed_sites: [], sites: { 'betasite.test': { channel: 'beta' } } }));
+  await new Promise((r) => setTimeout(r, 20));
+  const latest = (await siteJson('logs.test')).latest['osam-bookings'];
+  assert.ok(latest.beta && latest.stable, JSON.stringify(latest));
+  await report('betasite.test', latest.beta);
+  await report('stablesite.test', latest.stable);
+  await report('aheadsite.test', '99.0.0-beta.1'); // e.g. a beta on a stable site, or a release still being signed
+  await report('oldsite.test', '1.0.0');
+  await report('betaold.test', latest.stable === latest.beta ? '1.0.0' : latest.stable);
+  const rows = (await (await fetch(`${base}/v1/dashboard/sites`, { headers: admin })).json()).sites;
+  const st = (host) => (rows.find((r) => r.host === host && r.slug === 'osam-bookings') || {}).state;
+  assert.equal(st('betasite.test'), 'current');
+  assert.equal(st('stablesite.test'), 'current');
+  assert.equal(st('aheadsite.test'), 'ahead');
+  assert.equal(st('oldsite.test'), 'behind');
+  // Sites page: one section per plugin, and the "both plugins" view.
+  await post('/v1/report', { slug: 'osam-turnstile', site: 'betasite.test', version: '1.3.0', report: { env: { wp: '6.7.1' } } });
+  const { cookie } = await login();
+  const html = await (await page('/dashboard/sites', cookie.value)).text();
+  assert.ok(html.includes('id="t-osam-bookings"') && html.includes('id="t-osam-turnstile"'), 'a table per plugin');
+  assert.match(html, /Also: OSAM Turnstile 1\.3\.0/);
+  const bothHtml = await (await page('/dashboard/sites?plugin=both', cookie.value)).text();
+  assert.match(bothHtml, /<tr data-search="betasite\.test[^>]*data-state="current"(?![^>]*hidden)/);
+  assert.match(bothHtml, /<tr data-search="oldsite\.test[^>]*hidden/);
 });
 
 test('state survives a restart; status lists sites', async () => {
