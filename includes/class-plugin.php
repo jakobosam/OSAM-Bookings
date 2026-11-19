@@ -46,6 +46,7 @@ final class OSB_Plugin {
 		load_plugin_textdomain( 'osam-bookings', false, dirname( plugin_basename( OSB_FILE ) ) . '/languages' );
 
 		OSB_Install::maybe_upgrade();
+		OSB_Log::init();
 		OSB_Licence::init();
 
 		$this->payments = new OSB_Payments();
@@ -58,6 +59,7 @@ final class OSB_Plugin {
 		OSB_Addons::init();
 		OSB_Bundles::init();
 		OSB_Repeat::init();
+		OSB_Deposits::init();
 		OSB_Portal::init();
 		OSB_Resources_Rest::init();
 		OSB_Calendar_Sync::init();
@@ -70,6 +72,7 @@ final class OSB_Plugin {
 		OSB_Cron::init();
 		OSB_Elementor::init();
 		OSB_Updater::init();
+		OSB_Report::init();
 		OSB_Custom_Emails::init();
 		OSB_Invoices::init();
 		OSB_Calendar::init();

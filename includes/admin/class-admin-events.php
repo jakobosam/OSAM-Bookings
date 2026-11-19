@@ -198,6 +198,7 @@ class OSB_Admin_Events {
 						<div class="osb-field osb-field--third"><label for="osb_price"><?php esc_html_e( 'Price per place', 'osam-bookings' ); ?></label><div class="osb-affix osb-affix--pre"><span><?php echo esc_html( $sym ); ?></span><input type="number" id="osb_price" name="price" min="0" step="0.01" value="<?php echo esc_attr( $e->price ); ?>"></div></div>
 					</div>
 					<div class="osb-field"><label><?php esc_html_e( 'Payment methods offered', 'osam-bookings' ); ?></label><?php OSB_Admin::methods_checkboxes( $e->payment_methods ); ?></div>
+					<?php OSB_Deposits::item_fields( $e ); ?>
 					<label class="osb-switch"><input type="hidden" name="status" value="hidden"><input type="checkbox" name="status" value="active" <?php checked( 'active', $e->status ); ?>><span></span><?php esc_html_e( 'On sale — customers can book online', 'osam-bookings' ); ?></label>
 				</div>
 			</div>
@@ -257,7 +258,7 @@ class OSB_Admin_Events {
 			'payment_methods' => implode( ',', array_map( 'sanitize_key', (array) ( isset( $post['payment_methods'] ) ? $post['payment_methods'] : array() ) ) ),
 			'status'          => isset( $post['status'] ) && 'active' === $post['status'] ? 'active' : 'hidden',
 		);
-		$data = array_merge( $data, OSB_Meetings::from_post( $post, 'event' ) );
+		$data = array_merge( $data, OSB_Meetings::from_post( $post, 'event' ), OSB_Deposits::from_post( $post ) );
 		if ( '' === $data['name'] ) {
 			OSB_Admin::flash_error( __( 'Please give the event a name.', 'osam-bookings' ) );
 			wp_safe_redirect( wp_get_referer() );

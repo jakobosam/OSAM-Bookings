@@ -834,10 +834,21 @@ class OSB_Invoices {
 			// Lines sum to a different figure: invoice what was actually paid, against the booking.
 			$d     = OSB_Bookings::details( $booking );
 			$ids   = array( (int) $booking->id );
+			/* translators: %s item */
+			$desc = abs( (float) $booking->amount - $total ) > 0.009 && $total < (float) $booking->amount ? sprintf( __( 'Payment towards %s', 'osam-bookings' ), $d['item_name'] ) : $d['item_name'];
+			if ( OSB_Deposits::tracks( $booking ) && $total < (float) $booking->amount ) {
+				// Deposits & part payments: say which payment this is (the booking already includes it).
+				if ( OSB_Deposits::paid( $booking ) - $total <= 0.009 ) {
+					/* translators: %s item */
+					$desc = sprintf( __( 'Deposit for %s', 'osam-bookings' ), $d['item_name'] );
+				} elseif ( 'paid' === $booking->payment_status ) {
+					/* translators: %s item */
+					$desc = sprintf( __( 'Balance for %s', 'osam-bookings' ), $d['item_name'] );
+				}
+			}
 			$lines = array(
 				array(
-					/* translators: %s item */
-					'desc'   => abs( (float) $booking->amount - $total ) > 0.009 && $total < (float) $booking->amount ? sprintf( __( 'Payment towards %s', 'osam-bookings' ), $d['item_name'] ) : $d['item_name'],
+					'desc'   => $desc,
 					'detail' => self::booking_line_detail( $booking ),
 					'qty'    => 1,
 					'unit'   => $total,

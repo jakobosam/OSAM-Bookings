@@ -230,6 +230,7 @@ class OSB_Admin_Services {
 				<div class="osb-card">
 					<label class="osb-switch"><input type="hidden" name="status" value="hidden"><input type="checkbox" name="status" value="active" <?php checked( 'active', $s->status ); ?>><span></span><?php esc_html_e( 'Customers can book this online', 'osam-bookings' ); ?></label>
 					<div class="osb-field"><label><?php esc_html_e( 'Payment methods offered', 'osam-bookings' ); ?></label><?php OSB_Admin::methods_checkboxes( $s->payment_methods ); ?></div>
+					<?php OSB_Deposits::item_fields( $s ); ?>
 				</div>
 			</div>
 
@@ -266,7 +267,7 @@ class OSB_Admin_Services {
 			'payment_methods' => implode( ',', array_map( 'sanitize_key', (array) ( isset( $post['payment_methods'] ) ? $post['payment_methods'] : array() ) ) ),
 			'status'          => isset( $post['status'] ) && 'active' === $post['status'] ? 'active' : 'hidden',
 		);
-		$data = array_merge( $data, OSB_Meetings::from_post( $post, 'service' ) );
+		$data = array_merge( $data, OSB_Meetings::from_post( $post, 'service' ), OSB_Deposits::from_post( $post ) );
 
 		if ( '' === $data['name'] ) {
 			OSB_Admin::flash_error( __( 'Please give the service a name.', 'osam-bookings' ) );

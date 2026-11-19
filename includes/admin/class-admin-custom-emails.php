@@ -123,6 +123,10 @@ class OSB_Admin_Custom_Emails {
 			'customer_waitlist_offer'   => __( 'A place opens up for someone on the waiting list', 'osam-bookings' ),
 			'customer_invoice'          => __( 'You email an invoice, or a booking is paid later (if that’s switched on)', 'osam-bookings' ),
 			'customer_credit_note'      => __( 'A refund creates a credit note', 'osam-bookings' ),
+			'customer_balance_due'      => (float) OSB_Settings::get( 'deposit_reminder_days' ) > 0
+				/* translators: %s days */
+				? sprintf( __( '%s days before a booking that only has its deposit paid', 'osam-bookings' ), OSB_Admin_Custom_Emails::num( (float) OSB_Settings::get( 'deposit_reminder_days' ) ) )
+				: __( 'Off — set the days in Settings → Payments', 'osam-bookings' ),
 			'admin_new'                 => __( 'Any new booking', 'osam-bookings' ),
 			'admin_rescheduled'         => __( 'A customer moves their booking', 'osam-bookings' ),
 			'admin_cancelled'           => __( 'A booking is cancelled', 'osam-bookings' ),
@@ -502,7 +506,7 @@ class OSB_Admin_Custom_Emails {
 							</div>
 							<p class="osb-tags__label"><?php esc_html_e( 'Values', 'osam-bookings' ); ?></p>
 							<div class="osb-tags">
-								<?php foreach ( array( '{recipient_first_name}', '{recipient_name}', '{customer_first_name}', '{customer_name}', '{customer_email}', '{customer_phone}', '{item_name}', '{staff_name}', '{location}', '{date}', '{time}', '{end_time}', '{duration}', '{seats}', '{attendees}', '{amount}', '{discount}', '{payment_method}', '{payment_status}', '{status}', '{booking_id}', '{manage_url}', '{booking_url}', '{meeting_link}', '{review_url}', '{intake_name}', '{session_count}', '{covers}', '{tables}', '{site_name}', '{site_url}', '{field:your_field_key}' ) as $tag ) : ?><button type="button" class="osb-tag osb-copy" data-copy="<?php echo esc_attr( $tag ); ?>"><?php echo esc_html( $tag ); ?></button><?php endforeach; ?>
+								<?php foreach ( array_merge( array( '{recipient_first_name}', '{recipient_name}', '{customer_first_name}', '{customer_name}', '{customer_email}', '{customer_phone}', '{item_name}', '{staff_name}', '{location}', '{date}', '{time}', '{end_time}', '{duration}', '{seats}', '{attendees}', '{amount}', '{discount}', '{payment_method}', '{payment_status}', '{status}', '{booking_id}', '{manage_url}', '{booking_url}', '{meeting_link}', '{review_url}', '{intake_name}', '{session_count}', '{covers}', '{tables}', '{site_name}', '{site_url}', '{field:your_field_key}' ), OSB_Deposits::tags() ) as $tag ) : ?><button type="button" class="osb-tag osb-copy" data-copy="<?php echo esc_attr( $tag ); ?>"><?php echo esc_html( $tag ); ?></button><?php endforeach; ?>
 							</div>
 						</div>
 					</div>

@@ -807,6 +807,61 @@
 		return this.dateTotal();
 	};
 
+	/* ---------- deposits (only when Deposits & part payments is switched on) ---------- */
+
+	// The chosen item's deposit rule { mode, amount, full, label }, or null.
+	Booking.prototype.depositRule = function () {
+		var s = this.s;
+		if (!G.deposits || s.pass || s.mode === 'tables' || s.mode === 'bundles') { return null; }
+		var item = s.mode === 'resources' ? this.rChosen()[0] : (s.event || s.course || s.service);
+		return item && item.deposit ? item.deposit : null;
+	};
+
+	// Deposit the online checkout would take (ignoring "pay in full"); 0 = no deposit. The server works it out the same way.
+	Booking.prototype.depositAmount = function () {
+		var s = this.s;
+		var r = this.depositRule();
+		if (!r || this.total() <= 0) { return 0; }
+		var methods = this.methods();
+		var chosen = methods.filter(function (m) { return m.id === s.method; })[0];
+		if (chosen ? !chosen.online : !methods.some(function (m) { return m.online; })) { return 0; }
+		if (s.repeatOn && s.repeatPreview && s.repeatPreview.dates) { return s.repeatPreview.deposit_total || 0; }
+		var t = this.dateTotal();
+		var dep = r.mode === 'percent' ? Math.round(t * r.amount) / 100 : (r.mode === 'per_person' ? r.amount * (s.mode === 'resources' ? (s.excl ? 1 : s.places) : s.seats) : r.amount);
+		dep = Math.round(dep * 100) / 100;
+		return dep > 0 && dep < t - 0.004 ? dep : 0;
+	};
+
+	// What is paid now when a deposit applies (0 = the full total, as usual).
+	Booking.prototype.depositNow = function () {
+		var r = this.depositRule();
+		return r && this.s.payFull && r.full ? 0 : this.depositAmount();
+	};
+
+	Booking.prototype.depositChoiceHtml = function () {
+		var s = this.s;
+		var dep = this.depositAmount();
+		if (!dep) { return ''; }
+		var r = this.depositRule();
+		var total = this.total();
+		var rest = Math.round((total - dep) * 100) / 100;
+		if (!r.full) {
+			return '<p class="osb-deposit-note">' + esc((T.depPayDeposit || '%s').replace('%s', money(dep))) + '. ' + esc((T.depRestLater || '%s').replace('%s', money(rest))) + '</p>';
+		}
+		return '<fieldset class="osb-methods osb-deposit-choice"><legend>' + esc(T.depHowMuch) + '</legend>' +
+			'<label class="osb-method' + (!s.payFull ? ' is-selected' : '') + '"><input type="radio" name="osb_payfull" value="0"' + (!s.payFull ? ' checked' : '') + '> <span><b>' + esc((T.depPayDeposit || '%s').replace('%s', money(dep))) + '</b><small>' + esc((T.depRestLater || '%s').replace('%s', money(rest))) + '</small></span></label>' +
+			'<label class="osb-method' + (s.payFull ? ' is-selected' : '') + '"><input type="radio" name="osb_payfull" value="1"' + (s.payFull ? ' checked' : '') + '> <span><b>' + esc((T.depPayFull || '%s').replace('%s', money(total))) + '</b></span></label></fieldset>';
+	};
+
+	// Extra lines under a summary's total.
+	Booking.prototype.depositSummaryHtml = function () {
+		var dep = this.depositNow();
+		if (!dep) { return ''; }
+		var rest = Math.round((this.total() - dep) * 100) / 100;
+		return '<p class="osb-summary__total osb-summary__deposit"><span>' + esc(T.depositNow) + '</span><strong>' + esc(money(dep)) + '</strong></p>' +
+			'<p class="osb-summary__later"><span>' + esc(T.depLater) + '</span><span>' + esc(money(rest)) + '</span></p>';
+	};
+
 	/* ---------- add-ons ---------- */
 
 	Booking.prototype.itemTokens = function () {
@@ -1128,6 +1183,8 @@
 		if (seats) { s.seats = Math.min(this.maxSeats(), Math.max(1, parseInt(seats.value, 10) || 1)); }
 		var m = form.querySelector('[name="osb_method"]:checked');
 		if (m) { s.method = m.value; }
+		var pf = form.querySelector('[name="osb_payfull"]:checked');
+		if (pf) { s.payFull = pf.value === '1'; }
 		var t = form.querySelector('[name="osb_terms"]');
 		s.terms = t ? t.checked : true;
 		var hp = form.querySelector('[name="website"]');
@@ -1184,6 +1241,7 @@
 			return list;
 		})() : [];
 		body.payment_method = this.total() > 0 ? s.method : '';
+		if (G.deposits && s.payFull) { body.pay_in_full = 1; }
 		body.waitlist = this.cfg.waitlist || '';
 		body.return_url = this.cfg.returnUrl || window.location.href;
 		body.website = s.hp || '';
@@ -1387,7 +1445,7 @@
 				return self.loadRepeat();
 			}
 			if (e.target.name === 'osb_seats' && self.s.repeatOn) { self.collect(); return self.loadRepeat(); }
-			if (e.target.name === 'osb_seats' || e.target.name === 'osb_method' || e.target.name === 'osb_guests_same') {
+			if (e.target.name === 'osb_seats' || e.target.name === 'osb_method' || e.target.name === 'osb_guests_same' || e.target.name === 'osb_payfull') {
 				var before = self.s.seats;
 				self.collect();
 				if (e.target.name === 'osb_seats' && self.s.coupon && before !== self.s.seats) { return self.applyCoupon(self.s.coupon.code); }
@@ -1795,7 +1853,7 @@
 			return '<aside class="osb-summary"><h4>' + esc(L.summary) + '</h4>' +
 				'<p class="osb-summary__item">' + esc(this.rChosen().map(function (r) { return r.name; }).join(' + ')) + '</p>' +
 				'<dl>' + rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('') + '</dl>' +
-				'<p class="osb-summary__total"><span>' + esc(T.total) + '</span><strong>' + esc(rt > 0 ? money(rt) : L.free) + '</strong></p></aside>';
+				'<p class="osb-summary__total"><span>' + esc(T.total) + '</span><strong>' + esc(rt > 0 ? money(rt) : L.free) + '</strong></p>' + this.depositSummaryHtml() + '</aside>';
 		}
 		if (s.mode === 'tables') {
 			var tp = this.tablePayment();
@@ -1840,7 +1898,7 @@
 		return '<aside class="osb-summary"><h4>' + esc(L.summary) + '</h4>' +
 			'<p class="osb-summary__item">' + esc(s.event ? s.event.name : (s.course ? s.course.name : s.service.name)) + '</p>' +
 			'<dl>' + rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('') + '</dl>' + extra +
-			'<p class="osb-summary__total"><span>' + esc(T.total) + '</span><strong>' + esc(total > 0 ? money(total) : L.free) + '</strong></p></aside>';
+			'<p class="osb-summary__total"><span>' + esc(T.total) + '</span><strong>' + esc(total > 0 ? money(total) : L.free) + '</strong></p>' + this.depositSummaryHtml() + '</aside>';
 	};
 
 	Booking.prototype.view_details = function () {
@@ -1881,6 +1939,7 @@
 				html += '<label class="osb-method' + (s.method === m.id ? ' is-selected' : '') + '"><input type="radio" name="osb_method" value="' + esc(m.id) + '"' + (s.method === m.id ? ' checked' : '') + '> <span><b>' + esc(m.title) + '</b>' + (m.description ? '<small>' + esc(m.description) + '</small>' : '') + '</span></label>';
 			});
 			html += '</fieldset>';
+			html += this.depositChoiceHtml();
 		}
 		if (G.terms) {
 			html += '<div class="osb-field osb-field--check osb-terms"><label><input type="checkbox" name="osb_terms" value="1"' + (s.terms ? ' checked' : '') + '> <span>' + G.terms + '</span></label></div>';
@@ -1961,6 +2020,9 @@
 		if (d.type !== 'table' || d.card_held || d.payment_status_key !== 'free') {
 			rows.push([T.payment, d.type === 'table' && d.card_held ? d.payment_method : d.amount + ' · ' + d.payment_method + ' (' + d.payment_status + ')']);
 		}
+		// Deposits & part payments.
+		if (d.deposit_paid) { rows.push([T.depositPaid || '', d.deposit_paid]); }
+		if (d.balance_due) { rows.push([T.balanceDue || '', d.balance_due]); } else if (d.balance_note) { rows.push([T.restOfBill || '', T.onTheNight || d.balance_note]); } else if (d.deposit_due) { rows.push([T.depositNow || '', d.deposit_due]); }
 		rows.push([T.status, d.status]);
 
 		var html = '<div class="osb-done osb-done--' + tone + '">' +

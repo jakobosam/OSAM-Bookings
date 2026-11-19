@@ -323,7 +323,9 @@ class OSB_Gateway_Woocommerce extends OSB_Gateway {
 				OSB_DB::update( 'bookings', $booking_id, array( 'wc_order_id' => (int) $order_id ) );
 			}
 			if ( in_array( $to, array( 'processing', 'completed' ), true ) ) {
-				OSB_Bookings::mark_paid( $booking, $this->id, 'wc-' . $order_id . '-' . $booking_id, $booking->amount, array( 'order_id' => $order_id ) );
+				// A deposit booking was charged just its deposit in the basket (OSB_Repeat::charge_total()).
+				$paid = OSB_Deposits::tracks( $booking ) ? OSB_Repeat::charge_total( $booking ) : $booking->amount;
+				OSB_Bookings::mark_paid( $booking, $this->id, 'wc-' . $order_id . '-' . $booking_id, $paid, array( 'order_id' => $order_id ) );
 			} elseif ( in_array( $to, array( 'cancelled', 'failed' ), true ) && 'pending_payment' === $booking->status ) {
 				OSB_Bookings::payment_failed( $booking_id );
 			} elseif ( in_array( $to, array( 'cancelled', 'failed' ), true ) && in_array( $booking->status, array( 'pending', 'confirmed' ), true ) ) {

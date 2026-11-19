@@ -1392,6 +1392,7 @@ class OSB_Restaurant {
 				'notes'     => isset( $fields['notes'] ) ? (string) $fields['notes'] : '',
 				'internal'  => (string) $b->internal_note,
 				'payment'   => $b->payment_status,
+				'payment_label' => 'part_paid' === $b->payment_status ? __( 'Deposit paid', 'osam-bookings' ) : '',
 				'amount'    => (float) $b->amount > 0 ? OSB_Settings::money( $b->amount, $b->currency ) : '',
 				'card_held' => 'card_held' === $b->payment_status,
 				'fee'       => 'card_held' === $b->payment_status && ( $card = self::held_card( $b->id ) ) ? OSB_Settings::money( $card->amount, $b->currency ) : '',

@@ -49,7 +49,7 @@ class OSB_Customers {
 			SUM(CASE WHEN status = 'completed' OR ( status = 'confirmed' AND end_at < %s ) THEN 1 ELSE 0 END) AS visits,
 			SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) AS no_shows,
 			SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
-			SUM(CASE WHEN payment_status = 'paid' THEN amount ELSE 0 END) AS spent,
+			SUM(" . OSB_Deposits::sql_received() . ") AS spent,
 			MIN(created_at) AS first_at,
 			MAX(CASE WHEN start_at <= %s AND status IN ('confirmed','completed') THEN start_at END) AS last_visit,
 			MIN(CASE WHEN start_at > %s AND status IN ('pending','confirmed') THEN start_at END) AS next_at",

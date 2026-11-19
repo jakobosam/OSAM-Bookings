@@ -580,6 +580,7 @@ class OSB_Rest {
 				'half'           => isset( $p['half'] ) ? sanitize_key( $p['half'] ) : '',
 				'days'           => isset( $p['days'] ) ? absint( $p['days'] ) : 1,
 				'exclusive'      => ! empty( $p['exclusive'] ),
+				'pay_in_full'    => ! empty( $p['pay_in_full'] ), // Deposits & part payments: skip the deposit.
 		);
 	}
 
@@ -602,13 +603,22 @@ class OSB_Rest {
 		}
 		$data['repeat'] = null;
 		$dates          = OSB_Repeat::preview( $data, $repeat[0], $repeat[1] );
-		return rest_ensure_response(
-			array(
-				'dates' => $dates,
-				'ok'    => count( array_filter( wp_list_pluck( $dates, 'ok' ) ) ),
-				'total' => round( array_sum( wp_list_pluck( $dates, 'amount' ) ), 2 ),
-			)
+		$out            = array(
+			'dates' => $dates,
+			'ok'    => count( array_filter( wp_list_pluck( $dates, 'ok' ) ) ),
+			'total' => round( array_sum( wp_list_pluck( $dates, 'amount' ) ), 2 ),
 		);
+		if ( OSB_Deposits::enabled() ) {
+			// Deposits & part payments: what the first payment takes for all the dates (0 = no deposit).
+			$now = 0;
+			$any = false;
+			foreach ( $dates as $x ) {
+				$any  = $any || ( $x['ok'] && $x['deposit'] > 0 );
+				$now += $x['ok'] ? ( $x['deposit'] > 0 ? $x['deposit'] : $x['amount'] ) : 0;
+			}
+			$out['deposit_total'] = $any ? round( $now, 2 ) : 0;
+		}
+		return rest_ensure_response( $out );
 	}
 
 	/**

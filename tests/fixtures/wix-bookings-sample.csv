@@ -1,0 +1,7 @@
+Booking ID,Client Name,Email,Phone,Service,Staff Member,Start Time,End Time,Booking Status,Payment Status,Price,Number of Participants,Created Date,Notes,Custom Field
+wb-1001,Hannah Price,hannah@example.com,07700 900101,Deep Tissue Massage,Sam Taylor,"Mar 3, 2025 10:00 AM","Mar 3, 2025 11:00 AM",Confirmed,Paid,£50.00,1,"Feb 20, 2025 4:12 PM",Sore left shoulder,x
+wb-1002,Ian Brook,ian@example.com,07700 900102,Deep Tissue Massage,Sam Taylor,"Apr 14, 2025 2:30 PM","Apr 14, 2025 3:30 PM",Canceled,Not Paid,£50.00,1,"Apr 1, 2025 9:00 AM",,
+wb-1003,Jo Kerr,jo@example.com,,Beginners Pilates,Ruth Lee,"Nov 20, 2027 6:00 PM","Nov 20, 2027 7:00 PM",Confirmed,Not Paid,£24.00,2,"Oct 1, 2026 8:00 AM",Bringing a friend,
+wb-1004,Hannah Price,hannah@example.com,07700 900101,Beginners Pilates,Ruth Lee,"Dec 4, 2027 6:00 PM","Dec 4, 2027 7:00 PM",Waitlist,Not Paid,£12.00,1,"Oct 2, 2026 8:00 AM",,
+wb-1005,Ken Ola,ken@example.com,07700 900105,Free Consultation,Sam Taylor,"Jan 9, 2028 9:00 AM","Jan 9, 2028 9:20 AM",Pending,,,1,"Oct 3, 2026 8:00 AM",,
+wb-1001,Hannah Price,hannah@example.com,07700 900101,Deep Tissue Massage,Sam Taylor,"Mar 3, 2025 10:00 AM","Mar 3, 2025 11:00 AM",Confirmed,Paid,£50.00,1,"Feb 20, 2025 4:12 PM",Sore left shoulder,x

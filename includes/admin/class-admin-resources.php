@@ -359,6 +359,7 @@ class OSB_Admin_Resources {
 						</tbody>
 					</table>
 					<div class="osb-field"><label><?php esc_html_e( 'Payment methods offered', 'osam-bookings' ); ?></label><?php OSB_Admin::methods_checkboxes( $r->payment_methods ); ?></div>
+					<?php OSB_Deposits::item_fields( $r ); ?>
 				</div>
 			</div>
 
@@ -504,6 +505,7 @@ class OSB_Admin_Resources {
 			'access_release'       => $int( 'access_release', 0, 168 ),
 			'status'               => empty( $p['active'] ) ? 'inactive' : 'active',
 		);
+		$row = array_merge( $row, OSB_Deposits::from_post( $p ) );
 		if ( '' === $row['name'] ) {
 			OSB_Admin::flash_error( __( 'Please give the resource a name.', 'osam-bookings' ) );
 			OSB_Admin::redirect( admin_url( 'admin.php?page=osb-resources&action=' . ( $id ? 'edit&id=' . $id : 'new' ) ), 'error' );

@@ -495,3 +495,9 @@
 /* "Pay now" on the booking page and My bookings: put it first, on a row of its own. */
 .osb-booking.osb-booking .osb-actions--center .osb-btn--pay { order: -1; flex: 1 1 100%; max-width: 360px; }
 .osb-booking.osb-booking .osb-portal__btns .osb-btn--primary { margin-left: 0; }
+
+/* Deposits & part payments: the "how much to pay now" choice and the summary lines under the total. */
+.osb-booking.osb-booking .osb-deposit-choice { margin-top: 16px; }
+.osb-booking.osb-booking .osb-deposit-note { margin: 12px 0 0; font-size: .92em; color: var(--osb-muted); }
+.osb-booking.osb-booking .osb-summary__deposit { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--osb-border); font-size: 1em; }
+.osb-booking.osb-booking .osb-summary__later { display: flex; justify-content: space-between; margin: 4px 0 0; font-size: .9em; color: var(--osb-muted); }

@@ -245,7 +245,7 @@ class OSB_Admin_Bookings {
 		$g      = osb()->payments->get( $b->payment_method );
 		$method = 'free' === $b->payment_method ? __( 'Free', 'osam-bookings' ) : ( $g ? $g->admin_name() : ( 'manual' === $b->payment_method ? __( 'Manual', 'osam-bookings' ) : ( 'bundle' === $b->payment_method ? __( 'Bundle', 'osam-bookings' ) : $b->payment_method ) ) );
 		$ps     = OSB_Bookings::payment_statuses();
-		return $method . ' · ' . ( isset( $ps[ $b->payment_status ] ) ? $ps[ $b->payment_status ] : $b->payment_status );
+		return $method . ' · ' . ( isset( $ps[ $b->payment_status ] ) ? $ps[ $b->payment_status ] : $b->payment_status ) . OSB_Deposits::list_suffix( $b );
 	}
 
 	/**
@@ -460,7 +460,7 @@ class OSB_Admin_Bookings {
 					<?php OSB_Admin::card_head( __( 'Manage', 'osam-bookings' ) ); ?>
 					<div class="osb-field"><label><?php esc_html_e( 'Status', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'status', $b->status, 'select', OSB_Bookings::statuses() ); ?></div>
 					<label class="osb-switch"><input type="checkbox" name="notify" value="1" checked><span></span><?php esc_html_e( 'Email the customer about status changes', 'osam-bookings' ); ?></label>
-					<div class="osb-field"><label><?php esc_html_e( 'Payment', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'payment_status', $b->payment_status, 'select', OSB_Bookings::payment_statuses() ); ?></div>
+					<div class="osb-field"><label><?php esc_html_e( 'Payment', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'payment_status', $b->payment_status, 'select', OSB_Deposits::status_choices( $b->payment_status ) ); ?></div>
 					<?php if ( 'service' === $b->type ) : ?>
 						<div class="osb-subsection">
 							<h3><?php esc_html_e( 'Reschedule', 'osam-bookings' ); ?></h3>
@@ -659,7 +659,7 @@ class OSB_Admin_Bookings {
 					<div class="osb-card osb-form osb-sticky">
 						<?php OSB_Admin::card_head( __( 'Status & notifications', 'osam-bookings' ) ); ?>
 						<div class="osb-field"><label><?php esc_html_e( 'Status', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'status', 'confirmed', 'select', OSB_Bookings::statuses() ); ?></div>
-						<div class="osb-field"><label><?php esc_html_e( 'Payment', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'payment_status', 'unpaid', 'select', OSB_Bookings::payment_statuses() ); ?></div>
+						<div class="osb-field"><label><?php esc_html_e( 'Payment', 'osam-bookings' ); ?></label><?php OSB_Admin::input( 'payment_status', 'unpaid', 'select', OSB_Deposits::status_choices() ); ?></div>
 						<label class="osb-switch"><input type="checkbox" name="notify" value="1" checked><span></span><?php esc_html_e( 'Send the usual confirmation emails', 'osam-bookings' ); ?></label>
 						<button class="osb-btn osb-btn--primary osb-btn--block"><?php esc_html_e( 'Create booking', 'osam-bookings' ); ?></button>
 					</div>
@@ -821,9 +821,16 @@ class OSB_Admin_Bookings {
 		);
 
 		$pay = isset( $post['payment_status'] ) ? sanitize_key( $post['payment_status'] ) : $b->payment_status;
-		if ( isset( OSB_Bookings::payment_statuses()[ $pay ] ) && $pay !== $b->payment_status ) {
+		if ( isset( OSB_Deposits::status_choices( $b->payment_status )[ $pay ] ) && $pay !== $b->payment_status ) {
 			$data['payment_status'] = $pay;
-			if ( 'paid' === $pay ) {
+			if ( 'paid' === $pay && 'part_paid' === $b->payment_status ) {
+				// Deposit already in: only the balance is taken now (nothing for a table's bill on the night).
+				$rest                = OSB_Deposits::balance( $b );
+				$data['amount_paid'] = (float) $b->amount;
+				if ( $rest > 0 ) {
+					$invoice_payment = OSB_DB::add_payment( $b->id, 'manual', 'admin-' . get_current_user_id() . '-' . time(), $rest, $b->currency, 'completed', array( 'by' => get_current_user_id(), 'balance' => true ) );
+				}
+			} elseif ( 'paid' === $pay ) {
 				$pid = OSB_DB::add_payment( $b->id, 'manual', 'admin-' . get_current_user_id() . '-' . time(), $b->amount, $b->currency, 'completed', array( 'by' => get_current_user_id() ) );
 				$invoice_payment = $pid;
 			} elseif ( 'refunded' === $pay ) {
@@ -1024,6 +1031,10 @@ class OSB_Admin_Bookings {
 		fwrite( $out, "\xEF\xBB\xBF" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
 
 		$head = array( 'ID', 'Type', 'Service/Event/Course', 'Staff', 'Start', 'End', 'Places', 'Status', 'Payment method', 'Payment status', 'Amount', 'Currency' );
+		$deps = OSB_Deposits::enabled();
+		if ( $deps ) {
+			array_push( $head, 'Deposit', 'Amount paid', 'Balance due' );
+		}
 		foreach ( $fields as $field ) {
 			$head[] = $field['label'];
 		}
@@ -1035,6 +1046,10 @@ class OSB_Admin_Bookings {
 		foreach ( $rows as $b ) {
 			$vals = OSB_Bookings::fields( $b );
 			$line = array( $b->id, $b->type, OSB_Admin_Dashboard::item_name( $b, $names ), isset( $names['staff'][ (int) $b->staff_id ] ) ? $names['staff'][ (int) $b->staff_id ] : '', $b->start_at, $b->end_at, $b->seats, $b->status, $b->payment_method, $b->payment_status, $b->amount, $b->currency );
+			if ( $deps ) {
+				$got = 'paid' === $b->payment_status ? (float) $b->amount : ( 'part_paid' === $b->payment_status ? OSB_Deposits::paid( $b ) : 0 );
+				array_push( $line, isset( $b->deposit ) ? (float) $b->deposit : 0, number_format( $got, 2, '.', '' ), number_format( OSB_Deposits::balance_owed( $b ) ? OSB_Deposits::balance( $b ) : 0, 2, '.', '' ) );
+			}
 			foreach ( $fields as $field ) {
 				$v = isset( $vals[ $field['key'] ] ) ? (string) $vals[ $field['key'] ] : '';
 				// Neutralise spreadsheet formula injection.

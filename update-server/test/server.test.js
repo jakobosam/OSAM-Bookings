@@ -83,7 +83,7 @@ async function startServer(extraEnv = {}) {
   extraEnv = { PUBLIC_URL: `http://127.0.0.1:${port}`, ...extraEnv };
   proc = spawn('node', [APP], {
     env: { ...process.env, PORT: String(port), GITHUB_REPO: 'o/r', GITHUB_TOKEN: 'ghtoken', GITHUB_API: ghBase, PUBLIC_KEY: KEY.pub, ADMIN_TOKEN: ADMIN, DATA_DIR: dataDir, WEBHOOK_SECRET: 'whsec', ...extraEnv },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 50; i++) {
@@ -96,7 +96,8 @@ async function startServer(extraEnv = {}) {
   }
   throw new Error('server did not start');
 }
-const stopServer = () => new Promise((r) => (proc.exitCode !== null ? r() : (proc.on('exit', r), proc.kill('SIGTERM'))));
+// Ask over IPC so the server saves its files first (Windows has no SIGTERM for child processes).
+const stopServer = () => new Promise((r) => (proc.exitCode !== null ? r() : (proc.on('exit', r), proc.connected ? proc.send('shutdown') : proc.kill('SIGTERM'))));
 const admin = { Authorization: `Bearer ${ADMIN}` };
 const upd = async (site, version, extra = '') => (await fetch(`${base}/v1/update?slug=osam-bookings&site=${encodeURIComponent(site)}&version=${version}&caps=force,rollback,signed${extra}`)).json();
 const sync = async () => (await fetch(`${base}/v1/sync`, { headers: admin })).json();
@@ -236,6 +237,211 @@ test('signed rollbacks: scoped, forced, and withdrawn versions never offered', a
   assert.equal((await upd('other.com', '2.16.0')).instruction, null);
 });
 
+/* ---------------------------------------------------------------- reports, events, dashboard */
+
+const post = (p, body, headers = {}) => fetch(`${base}${p}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) });
+const sampleReport = (over = {}) => ({
+  generated: Math.floor(Date.now() / 1000),
+  env: { wp: '6.7.1', php: '8.2.10', db: { type: 'mariadb', version: '10.6.12' }, multisite: false, locale: 'en_GB', timezone: 'Europe/London', title: 'Client Ltd', home: 'https://client.co.uk/', theme: 'Astra', active_plugins: 14, https: true, wp_debug: false, disable_wp_cron: true },
+  updates: { auto: true, last_forced: null, blocked: [], last_check: { time: 1, latest: '2.16.0', error: '' } },
+  cron: { state: 'ok', last_run: Math.floor(Date.now() / 1000) - 60, gap: 300, real_cron: true, server: true, late: false },
+  features: ['events', 'coupons'],
+  payments: { gateways: ['stripe', 'onsite'], stripe: { mode: 'live', webhook: true } },
+  zoom: false,
+  calendar: { enabled: true, connections: 2, errors: 0 },
+  subscription: { linked: true, status: 'active' },
+  problems: { day: { total: 0, errors: 0, warnings: 0, by_area: {} }, week: { total: 1, errors: 0, warnings: 1, by_area: { email: 1 } }, last_updates: null, last_cron: null },
+  bookings: { total: 120, last_30d: 14, upcoming: 6 },
+  ...over,
+});
+const report = (site, version, rep = sampleReport(), extra = {}) => post('/v1/report', { schema: 1, slug: 'osam-bookings', site, version, report: rep, ...extra });
+const siteJson = async (host) => (await fetch(`${base}/v1/dashboard/sites/${host}`, { headers: admin })).json();
+
+function cookieFrom(res, name) {
+  const all = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [res.headers.get('set-cookie') || ''];
+  const c = all.find((x) => x.startsWith(`${name}=`));
+  return c ? { value: c.split(';')[0].slice(name.length + 1), raw: c } : null;
+}
+let ipN = 0;
+async function login(token = ADMIN, ip = `10.0.0.${++ipN}`) {
+  const page = await fetch(`${base}/dashboard/login`, { headers: { 'X-Forwarded-For': ip } });
+  const pre = cookieFrom(page, 'osam_pre').value;
+  assert.match(await page.text(), new RegExp(`name="pre" value="${pre}"`));
+  const res = await fetch(`${base}/dashboard/login`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: `osam_pre=${pre}`, 'X-Forwarded-For': ip },
+    body: new URLSearchParams({ pre, token }).toString(),
+  });
+  return { res, cookie: cookieFrom(res, 'osam_dash') };
+}
+const page = (p, cookie) => fetch(`${base}${p}`, { redirect: 'manual', headers: cookie ? { Cookie: `osam_dash=${cookie}` } : {} });
+const csrfOf = (html) => (html.match(/name="csrf" value="([0-9a-f]+)"/) || [])[1];
+
+test('reports: a valid report is stored with a daily summary and version timeline', async () => {
+  const r = await report('https://www.client.co.uk/', '2.16.0');
+  assert.equal(r.status, 202, await r.text());
+  assert.equal((await report('client.co.uk', '2.16.0', sampleReport({ bookings: { total: 121, last_30d: 15, upcoming: 6 } }))).status, 202);
+  const d = await siteJson('client.co.uk');
+  assert.equal(d.ok, true);
+  assert.equal(d.reports['osam-bookings'].report.env.title, 'Client Ltd');
+  assert.equal(d.reports['osam-bookings'].report.bookings.last_30d, 15);
+  assert.equal(d.history.daily.filter((x) => x.slug === 'osam-bookings').length, 1, 'one summary per day');
+  assert.equal(d.history.daily[0].bookings_30d, 15);
+  assert.ok(d.history.versions['osam-bookings'].some((v) => v.version === '2.16.0' && v.first_seen));
+  assert.equal(d.health.level, 'ok', JSON.stringify(d.health));
+  // Odd keys and long strings are dropped / cut.
+  const odd = JSON.parse('{"__proto__":{"x":1},"env":{"title":"' + 'a'.repeat(5000) + '","bad key!":1}}');
+  assert.equal((await report('odd.test', '2.16.0', odd)).status, 202);
+  const o = await siteJson('odd.test');
+  assert.equal(o.reports['osam-bookings'].report.env.title.length, 300);
+  assert.equal(o.reports['osam-bookings'].report.env['bad key!'], undefined);
+  assert.equal(Object.keys(o.reports['osam-bookings'].report).includes('__proto__'), false);
+  // The second plugin reports too.
+  assert.equal((await post('/v1/report', { slug: 'osam-turnstile', site: 'client.co.uk', version: '1.3.0', report: { env: { wp: '6.7.1' }, updates: { auto: true } } })).status, 202);
+  assert.ok((await siteJson('client.co.uk')).reports['osam-turnstile']);
+});
+
+test('reports: oversized, malformed and invalid ones are refused', async () => {
+  assert.equal((await report('big.test', '2.16.0', sampleReport({ padding: 'x'.repeat(40 * 1024) }))).status, 413);
+  const many = {};
+  for (let i = 0; i < 59; i++) many[`k${i}`] = 'y'.repeat(200);
+  assert.equal((await report('big2.test', '2.16.0', { a: many, b: many })).status, 413, 'too big after cleaning');
+  assert.equal((await post('/v1/report', '{not json')).status, 400);
+  assert.equal((await post('/v1/report', [1, 2])).status, 400);
+  assert.equal((await report('<script>x</script>', '2.16.0')).status, 400);
+  assert.equal((await report('ok.test', 'not-a-version')).status, 400);
+  assert.equal((await report('ok.test', '2.16.0', 'string')).status, 400);
+  assert.equal((await post('/v1/report', { slug: 'BAD SLUG', site: 'ok.test', version: '2.16.0', report: {} })).status, 400);
+  assert.equal((await fetch(`${base}/v1/dashboard/sites/big.test`, { headers: admin })).status, 404);
+});
+
+test('reports: per-site rate limit', async () => {
+  for (let i = 0; i < 6; i++) assert.equal((await report('busy.test', '2.16.0')).status, 202);
+  const r = await report('busy.test', '2.16.0');
+  assert.equal(r.status, 429);
+  assert.ok(Number(r.headers.get('retry-after')) > 0);
+  assert.equal((await report('calm.test', '2.16.0')).status, 202, 'other sites unaffected');
+});
+
+test('events: update results, duplicates and health', async () => {
+  const ev = (e) => post('/v1/event', { slug: 'osam-bookings', site: 'evt.test', version: '2.15.0', event: { type: 'update', time: 1, ...e } });
+  assert.equal((await ev({ from: '2.15.0', to: '2.16.0', ok: false, error: 'Download failed.', forced: true })).status, 202);
+  assert.equal((await (await ev({ from: '2.15.0', to: '2.16.0', ok: false, error: 'Download failed.' })).json()).duplicate, true);
+  assert.equal((await post('/v1/event', { slug: 'osam-bookings', site: 'evt.test', version: '2.15.0', event: { type: 'nope' } })).status, 400);
+  let d = await siteJson('evt.test');
+  assert.equal(d.history.updates.length, 1);
+  assert.equal(d.history.updates[0].error, 'Download failed.');
+  assert.equal(d.health.level, 'bad');
+  const ov = await (await fetch(`${base}/v1/dashboard/overview`, { headers: admin })).json();
+  assert.ok(ov.problems.some((p) => p.host === 'evt.test'));
+  assert.equal((await ev({ from: '2.15.0', to: '2.16.0', ok: true })).status, 202);
+  d = await siteJson('evt.test');
+  assert.equal(d.health.level, 'ok', JSON.stringify(d.health));
+  assert.ok(d.history.versions['osam-bookings'].some((v) => v.version === '2.16.0'));
+  // Problems in a report show up too: cron late, Stripe test mode on a live site, webhook missing.
+  await report('shop.example.com', '2.16.0', sampleReport({ cron: { state: 'late', late: true }, payments: { gateways: ['stripe'], stripe: { mode: 'test', webhook: false } } }));
+  const issues = (await siteJson('shop.example.com')).health.issues.map((i) => i.msg).join('|');
+  assert.match(issues, /late/);
+  assert.match(issues, /test mode/);
+  assert.match(issues, /webhook/);
+  await report('staging.example.com', '2.16.0', sampleReport({ payments: { gateways: ['stripe'], stripe: { mode: 'test', webhook: true } } }));
+  assert.equal((await siteJson('staging.example.com')).health.level, 'ok', 'test mode is fine on staging');
+});
+
+test('downloads are counted per release (GET only)', async () => {
+  const before = (await (await fetch(`${base}/v1/dashboard/releases`, { headers: admin })).json()).releases['osam-bookings'].find((r) => r.version === '2.16.0').downloads;
+  const r = await upd('dl.test', '2.15.0');
+  assert.equal((await fetch(r.package, { method: 'HEAD' })).status, 200);
+  await (await fetch(r.package)).arrayBuffer();
+  const rel = (await (await fetch(`${base}/v1/dashboard/releases`, { headers: admin })).json()).releases['osam-bookings'].find((x) => x.version === '2.16.0');
+  assert.equal(rel.downloads, before + 1);
+  assert.ok(rel.sites >= 1);
+  assert.equal((await siteJson('dl.test')).history.downloads[0].version, '2.16.0');
+});
+
+test('dashboard: login, session cookie, security headers, CSRF and logout', async () => {
+  const anon = await page('/dashboard');
+  assert.equal(anon.status, 303);
+  assert.match(anon.headers.get('location'), /\/dashboard\/login$/);
+  assert.equal((await fetch(`${base}/v1/dashboard/overview`)).status, 401);
+
+  assert.equal((await login('wrong-token-wrong-token-wrong')).res.status, 401);
+  const { res, cookie } = await login();
+  assert.equal(res.status, 303);
+  assert.ok(cookie, 'session cookie set');
+  assert.match(cookie.raw, /HttpOnly/);
+  assert.match(cookie.raw, /Secure/);
+  assert.match(cookie.raw, /SameSite=Strict/);
+  assert.match(cookie.raw, /Max-Age=43200/);
+
+  const ov = await page('/dashboard', cookie.value);
+  assert.equal(ov.status, 200);
+  const csp = ov.headers.get('content-security-policy');
+  assert.match(csp, /script-src 'nonce-[^']+'/);
+  assert.doesNotMatch(csp, /unsafe-inline/);
+  assert.match(ov.headers.get('cache-control'), /no-store/);
+  assert.equal(ov.headers.get('x-frame-options'), 'DENY');
+  const html = await ov.text();
+  assert.match(html, /Overview/);
+  assert.match(html, /Sync now/);
+  for (const p of ['/dashboard/sites', '/dashboard/releases', '/dashboard/config', '/dashboard/site/client.co.uk']) assert.equal((await page(p, cookie.value)).status, 200, p);
+  assert.equal((await page('/dashboard/site/nowhere.test', cookie.value)).status, 404);
+  assert.equal((await fetch(`${base}/v1/dashboard/overview`, { headers: { Cookie: `osam_dash=${cookie.value}` } })).status, 200);
+
+  // A forged or altered cookie is ignored.
+  assert.equal((await page('/dashboard', cookie.value.replace(/^./, (c) => (c === 'a' ? 'b' : 'a')))).status, 303);
+
+  // POSTs need the CSRF token.
+  const csrf = csrfOf(html);
+  assert.ok(csrf);
+  const form = (p, body) => fetch(`${base}${p}`, { method: 'POST', redirect: 'manual', headers: { Cookie: `osam_dash=${cookie.value}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body).toString() });
+  assert.equal((await form('/dashboard/sync', {})).status, 403);
+  assert.equal((await form('/dashboard/sync', { csrf: 'f'.repeat(64) })).status, 403);
+  const s = await form('/dashboard/sync', { csrf });
+  assert.equal(s.status, 303);
+  assert.match(s.headers.get('location'), /msg=sync_ok/);
+  assert.equal((await form('/dashboard/logout', {})).status, 403);
+  const out = await form('/dashboard/logout', { csrf });
+  assert.equal(out.status, 303);
+  assert.match(cookieFrom(out, 'osam_dash').raw, /Max-Age=0/);
+  assert.equal((await page('/dashboard', cookie.value)).status, 303, 'old cookie no longer works');
+
+  // Login form needs its own pre-login token.
+  const bad = await fetch(`${base}/dashboard/login`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Forwarded-For': '10.1.1.1' }, body: `token=${ADMIN}` });
+  assert.equal(bad.status, 400);
+});
+
+test('dashboard: five wrong tokens lock the address out for 15 minutes', async () => {
+  const ip = '10.66.66.66';
+  for (let i = 1; i <= 4; i++) assert.equal((await login(`wrong-${i}-xxxxxxxxxxxxxxxxxxxxxxx`, ip)).res.status, 401);
+  const fifth = await login('wrong-5-xxxxxxxxxxxxxxxxxxxxxxx', ip);
+  assert.equal(fifth.res.status, 429);
+  const right = await login(ADMIN, ip);
+  assert.equal(right.res.status, 429, 'locked even with the right token');
+  assert.equal(right.cookie, null);
+  assert.match(await right.res.text(), /Too many wrong tries/);
+  assert.equal((await login(ADMIN, '10.66.66.67')).res.status, 303, 'other addresses unaffected');
+});
+
+test('dashboard: everything a site sent is HTML-escaped', async () => {
+  const evil = '<script>alert(1)</script>';
+  const evil2 = '"><img src=x onerror=alert(2)>';
+  const rep = sampleReport({ env: { ...sampleReport().env, title: evil, theme: evil2, home: 'javascript:alert(3)' }, features: [evil2], extra: { [`k`]: evil } });
+  assert.equal((await report('xss.test', '2.16.0', rep)).status, 202);
+  await post('/v1/event', { slug: 'osam-bookings', site: 'xss.test', version: '2.16.0', event: { type: 'update', from: '2.16.0', to: '<b>9</b>', ok: false, error: evil2 } });
+  await fetch(`${base}/v1/update?slug=osam-bookings&site=xss.test&version=2.16.0&wp=${encodeURIComponent(evil)}&php=${encodeURIComponent(evil2)}`);
+  const { cookie } = await login();
+  for (const p of ['/dashboard/site/xss.test', '/dashboard/sites', '/dashboard']) {
+    const html = await (await page(p, cookie.value)).text();
+    assert.ok(!html.includes(evil), `${p}: raw script tag`);
+    assert.ok(!html.includes('<img src=x'), `${p}: raw img tag`);
+    assert.ok(!html.includes('<b>9</b>'), `${p}: raw b tag`);
+    assert.ok(!html.includes('href="javascript:'), `${p}: javascript link`);
+    if (p !== '/dashboard') assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), `${p}: escaped title shown`);
+  }
+});
+
 test('state survives a restart; status lists sites', async () => {
   await stopServer();
   await startServer();
@@ -245,6 +451,27 @@ test('state survives a restart; status lists sites', async () => {
   assert.equal(st.rollbacks.length, 1);
   assert.ok(st.sites['client.co.uk']);
   assert.equal((await upd('client.co.uk', '2.16.0')).version, '2.15.0');
+  // Reports, history and download counts were saved too.
+  const d = await siteJson('client.co.uk');
+  assert.equal(d.reports['osam-bookings'].report.env.title, 'Client Ltd');
+  assert.ok(d.history.daily.length >= 1);
+  assert.equal((await siteJson('evt.test')).history.updates.length, 2);
+  const rel = (await (await fetch(`${base}/v1/dashboard/releases`, { headers: admin })).json()).releases['osam-bookings'].find((x) => x.version === '2.16.0');
+  assert.ok(rel.downloads >= 1);
+  // Sessions survive a restart (same ADMIN_TOKEN and data folder).
+  const { cookie } = await login();
+  assert.equal((await page('/dashboard', cookie.value)).status, 200);
+});
+
+test('data files stay bounded: MAX_SITES drops the longest-silent sites', async () => {
+  await stopServer();
+  await startServer({ MAX_SITES: '12', FLUSH_SECONDS: '1' });
+  for (let i = 0; i < 15; i++) await upd(`many-${i}.test`, '2.16.0');
+  const st = await (await fetch(`${base}/v1/status`, { headers: admin })).json();
+  assert.ok(Object.keys(st.sites).length <= 12, String(Object.keys(st.sites).length));
+  assert.ok(st.sites['many-14.test'], 'newest kept');
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.ok(Object.keys(JSON.parse(fs.readFileSync(path.join(dataDir, 'sites.json'), 'utf8'))).length <= 12);
 });
 
 test('UPDATE_KEY is enforced when set', async () => {
@@ -252,6 +479,11 @@ test('UPDATE_KEY is enforced when set', async () => {
   await startServer({ UPDATE_KEY: 'sitekey' });
   assert.equal((await upd('client.co.uk', '2.15.0')).code, 'bad_key');
   assert.equal((await upd('other.com', '2.15.0', '&key=sitekey')).ok, true);
+  // Reports and events need the key too.
+  assert.equal((await report('other.com', '2.16.0')).status, 403);
+  assert.equal((await report('other.com', '2.16.0', sampleReport(), { key: 'wrong' })).status, 403);
+  assert.equal((await report('other.com', '2.16.0', sampleReport(), { key: 'sitekey' })).status, 202);
+  assert.equal((await post('/v1/event', { slug: 'osam-bookings', site: 'other.com', version: '2.16.0', event: { type: 'update', ok: true } })).status, 403);
   // Keep a copy of a real response for the PHP check.
   fs.writeFileSync(path.join(tmp, 'response-rollback.json'), JSON.stringify(await upd('client.co.uk', '2.16.0', '&key=sitekey')));
   fs.writeFileSync(path.join(tmp, 'response-normal.json'), JSON.stringify(await upd('other.com', '2.15.0', '&key=sitekey')));

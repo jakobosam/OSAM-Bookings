@@ -137,6 +137,12 @@ abstract class OSB_Gateway {
 	 * @param mixed  $context Context.
 	 */
 	protected function log( $message, $context = null ) {
+		// Always kept in the plugin's problem log (shown on the dashboard), without the raw response.
+		$detail = '';
+		if ( is_array( $context ) ) {
+			$detail = (string) ( $context['error']['message'] ?? $context['message'] ?? $context['error_description'] ?? $context['name'] ?? '' );
+		}
+		OSB_Log::error( 'payments', $this->admin_name() . ': ' . $message . ( '' !== $detail ? ' — ' . $detail : '' ), array( 'gateway' => $this->id ) );
 		if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
 			// phpcs:ignore WordPress.PHP.DevelopmentFunctions
 			error_log( '[OSAM Bookings][' . $this->id . '] ' . $message . ( $context ? ' ' . wp_json_encode( $context ) : '' ) );

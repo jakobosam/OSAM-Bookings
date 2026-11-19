@@ -40,14 +40,17 @@ env:
 
 jobs:
   rollback:
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest (moving to Ubuntu 26.04 from October 2026): this job relies on the image's
+    # preinstalled php and gh, and a rollback is the last place for a surprise image change.
+    runs-on: ubuntu-24.04
     environment: release-signing
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
+          package-manager-cache: false
 
       - name: Work out which versions to withdraw
         id: block

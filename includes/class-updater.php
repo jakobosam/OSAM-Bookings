@@ -13,6 +13,7 @@
  *
  * Turn off with define( 'OSB_UPDATES', false ); in wp-config.php.
  * Point elsewhere with define( 'OSB_UPDATE_SERVER', 'https://…' ); (for testing).
+ * The daily status report to the same server is in OSB_Report (off with define( 'OSB_REPORT', false );).
  *
  * @package OSAM_Bookings
  */
@@ -317,6 +318,9 @@ class OSB_Updater {
 			$out = self::vet( $out, $body );
 		}
 		$out['checked'] = time();
+		if ( isset( $out['error'] ) ) {
+			OSB_Log::warn( 'updates', $out['error'] );
+		}
 		// Checked hourly so forced updates and rollbacks reach every site within about an hour.
 		set_site_transient( self::CACHE, $out, HOUR_IN_SECONDS );
 		self::$mem = $out;
@@ -577,7 +581,13 @@ class OSB_Updater {
 				set_site_transient( 'update_plugins', $tr );
 			}
 			$upgrader = new Plugin_Upgrader( new Automatic_Upgrader_Skin() );
-			$result   = $upgrader->upgrade( $base, array( 'clear_update_cache' => false ) );
+			if ( class_exists( 'OSB_Report' ) ) {
+				OSB_Report::$forced = true; // So the update result sent to OSAM says it was required.
+			}
+			$result = $upgrader->upgrade( $base, array( 'clear_update_cache' => false ) );
+			if ( class_exists( 'OSB_Report' ) ) {
+				OSB_Report::$forced = false;
+			}
 			if ( true === $result ) {
 				if ( $active && ! is_plugin_active( $base ) ) {
 					activate_plugin( $base, '', is_multisite() && is_plugin_active_for_network( $base ), true );
@@ -591,6 +601,11 @@ class OSB_Updater {
 		}
 		update_option( self::FORCE_STATUS, $status, false );
 		if ( ! $status['ok'] ) {
+			/* translators: 1: version 2: reason */
+			OSB_Log::error( 'updates', sprintf( __( 'Version %1$s, required by OSAM, couldn’t be installed: %2$s', 'osam-bookings' ), $want, $status['msg'] ) );
+			if ( class_exists( 'OSB_Report' ) && method_exists( 'OSB_Report', 'update_result' ) ) {
+				OSB_Report::update_result( $from, $want, false, $status['msg'], true ); // Tell OSAM's update server.
+			}
 			set_transient( 'osb_forced_wait', 1, 30 * MINUTE_IN_SECONDS ); // Try again in half an hour.
 		}
 		delete_transient( 'osb_forced_lock' );

@@ -437,7 +437,7 @@
 			'<dt>' + esc(T.tables) + '</dt><dd>' + esc(b.tables.length ? this.tableNames(b.tables) : T.unassigned) + '</dd>' +
 			(b.phone ? '<dt>' + esc(T.phone) + '</dt><dd><a href="tel:' + esc(b.phone) + '">' + esc(b.phone) + '</a></dd>' : '') +
 			(b.email ? '<dt>' + esc(T.email) + '</dt><dd><a href="mailto:' + esc(b.email) + '">' + esc(b.email) + '</a></dd>' : '') +
-			(b.amount ? '<dt>' + esc(T.paid) + '</dt><dd>' + esc(b.amount) + (b.payment === 'paid' ? '' : ' (' + esc(b.payment) + ')') + '</dd>' : '') +
+			(b.amount ? '<dt>' + esc(T.paid) + '</dt><dd>' + esc(b.amount) + (b.payment === 'paid' ? '' : ' (' + esc(b.payment_label || b.payment) + ')') + '</dd>' : '') +
 			(b.card_held ? '<dt>' + esc(T.cardOnFile) + '</dt><dd><span class="dashicons dashicons-lock"></span> ' + esc(b.fee) + '</dd>' : '') +
 			'</dl>' +
 			(b.notes ? '<div class="osb-rest-note"><strong>' + esc(T.notes) + '</strong><p>' + esc(b.notes) + '</p></div>' : '') +

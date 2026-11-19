@@ -133,12 +133,16 @@ class OSB_Payments {
 	 * @return float
 	 */
 	public static function outstanding( $booking ) {
-		if ( ! $booking || empty( $booking->id ) || (float) $booking->amount <= 0 || 'unpaid' !== $booking->payment_status ) {
+		if ( ! $booking || empty( $booking->id ) || (float) $booking->amount <= 0 || ! in_array( $booking->payment_status, array( 'unpaid', 'part_paid' ), true ) ) {
 			return 0.0;
 		}
 		$statuses = (array) apply_filters( 'osb_pay_statuses', array( 'pending_payment', 'confirmed', 'completed', 'no_show' ), $booking );
 		if ( ! in_array( $booking->status, $statuses, true ) ) {
 			return 0.0; // Cancelled, payment given up on, or still waiting to be approved.
+		}
+		if ( 'part_paid' === $booking->payment_status ) {
+			// Deposit paid (Deposits & part payments): the balance. For a table that's settled on the night.
+			return (float) apply_filters( 'osb_booking_outstanding', OSB_Deposits::balance( $booking ), $booking );
 		}
 		if ( 'pending_payment' === $booking->status && OSB_Repeat::is_follower( $booking ) ) {
 			return 0.0; // Paid for with the first date of the series.
@@ -220,6 +224,9 @@ class OSB_Payments {
 	 * @return string
 	 */
 	public static function pay_label( $booking ) {
+		if ( isset( $booking->payment_status ) && 'part_paid' === $booking->payment_status ) {
+			return __( 'Pay the balance', 'osam-bookings' );
+		}
 		return 'pending_payment' === $booking->status ? __( 'Complete payment', 'osam-bookings' ) : __( 'Pay now', 'osam-bookings' );
 	}
 
@@ -256,6 +263,7 @@ class OSB_Payments {
 		$charge            = clone $booking;
 		$charge->amount    = $due;
 		$charge->series_id = 0;
+		$charge->deposit   = 0; // $due already allows for a deposit.
 		add_filter( 'osb_stripe_session_params', array( __CLASS__, 'stripe_pay_params' ) );
 		try {
 			$result = $gateways[ $gateway_id ]->process( $charge, self::pay_url( $booking ) );

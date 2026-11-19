@@ -666,6 +666,7 @@ class OSB_Admin {
 			'stripe_ok'        => __( 'Stripe is connected and working, and payment confirmations are set up.', 'osam-bookings' ),
 			'stripe_ok_nohook' => __( 'Stripe accepted the key. Payment confirmations couldn’t be set up — see the note under Stripe.', 'osam-bookings' ),
 			'stripe_off'       => __( 'Stripe disconnected.', 'osam-bookings' ),
+			'log_cleared'      => __( 'Problem list cleared.', 'osam-bookings' ),
 			'ce_copied'        => __( 'Copied. The copy is switched off until you switch it on.', 'osam-bookings' ),
 			'update_found'     => __( 'A new version is available — see the Updates card below, or Dashboard → Updates.', 'osam-bookings' ),
 			'licence_checked'  => __( 'Subscription status checked.', 'osam-bookings' ),

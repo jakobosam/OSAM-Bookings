@@ -90,18 +90,61 @@ Test on one site first: update it, then in **OSAM Bookings → Settings → Gene
   - `pin`: keep a site on one version (only moves it forward; going back needs a rollback). A plain version pins OSAM Bookings only; use `{ "plugin": "version" }` to pin either plugin.
   - `/v1/status` → `site_versions` counts sites per plugin and version.
 
-## Updating this server
+## Dashboard
 
-Upload the new `osam-update-server.zip` into the same folder, extract and overwrite, then **Restart** in Setup Node.js App. Don't delete the `data` folder — it holds the cached releases, rollbacks, site list and `config.json`.
+Open `https://updates.osamweb.com/dashboard` and log in with the **ADMIN_TOKEN** (works on a phone too).
+
+- **Overview** — how many sites (seen in the last 24 hours / 7 days / quiet for more than 7 days), versions in use per plugin and how many are on the latest stable or beta, channels, every site with a problem and why, the last GitHub sync with a **Sync now** button, and the latest releases.
+- **Sites** — one row per site and plugin: version (marked *behind* or *pinned*), channel, WordPress, PHP, last seen and a health badge (OK / Check / Problem / Quiet). Search, filter by plugin, health or channel, and click a column heading to sort.
+- **Site page** (click a site) — everything the site reported, what needs attention, the version timeline (when each version was first seen), update results (from → to, OK or failed, the error), the last 30 daily summaries, recent downloads and the site's `config.json` entry (read-only).
+- **Releases** — every release per plugin: channel, published date, how many sites run it, download count; plus the rollbacks.
+- **Config** — `config.json` (read-only; edit it in File Manager as before), which environment variables are set (not their values), and data file sizes.
+
+A site shows as a **Problem** when it reports errors in the last 24 hours, its scheduled jobs are late or have never run, an update failed, its OSAM subscription is suspended, or the Stripe webhook isn't set up; **Check** for an overdue subscription, Stripe in test mode on a live site, WP_DEBUG on a live site, calendar connections in error, an update-check error or no report for 3 days; **Quiet** when it hasn't been in touch for 7 days. A site counts as *not live* (so Stripe test mode is fine) when its host looks like `staging.`/`dev.`/`test.`…, WordPress says it's a staging/development site, or you add `"live": false` to its entry in `config.json` (`"live": true` overrides the guess).
+
+**Security**: the token is swapped for a signed session cookie (HttpOnly, Secure, SameSite=Strict) that lasts 12 hours; changing ADMIN_TOKEN logs everyone out. Five wrong tokens lock that IP address out for 15 minutes. Every form has a CSRF token, every value from a site is HTML-escaped, and pages are sent with a strict Content-Security-Policy (per-page nonce), no-store and anti-framing headers. The dashboard needs HTTPS (the Secure cookie) — `http://localhost` works for testing.
+
+## What sites send (status reports)
+
+OSAM Bookings 2.17+ sends a small JSON report once a day (`POST /v1/report`, about 2 KB), and OSAM Turnstile a lighter one. They contain only operational information:
+
+- versions: plugin, WordPress, PHP, database (MySQL / MariaDB / SQLite and version), OSAM database schema
+- site: title, home URL, multisite, language, timezone, active theme, number of active plugins, memory limits, web server, HTTPS, WP_DEBUG, DISABLE_WP_CRON, WordPress environment type
+- updates: auto-updates on/off, last required-version install (from → to, ok, error), withdrawn versions, last update check
+- scheduled jobs: state (ok / server / visitor / late / never), last run, whether a server cron job runs them
+- features switched on; payment methods; Stripe live/test and whether its webhook is set up; Zoom connected; calendar connections and how many are in error; subscription linked and its status
+- problem-log counts for 24 hours and 7 days by area, plus only the latest **updates** and **cron** messages
+- booking counts: total, created in the last 30 days, upcoming
+
+Never customer names, emails, phone numbers, booking details, or messages from other problem-log areas. After each update of the plugin (or a failed required install) the site also sends `POST /v1/event` with from → to, ok/failed and the error.
+
+**To switch it off on a site**: add `define( 'OSB_REPORT', false );` to its `wp-config.php`. Updates keep working; the site just stops sending reports (it still appears in the dashboard from its hourly update checks). Sites with `OSB_UPDATES` false send nothing at all.
+
+The server treats reports as untrusted: bodies over 32 KB are refused, every value is trimmed (strings to 300 characters, limited nesting, keys and list lengths), a stored report is at most 16 KB, each site can send 6 reports per plugin and 20 update results per hour, and each IP 120 requests per 10 minutes. If `UPDATE_KEY` is set, reports need it too. `allowed_sites` applies as well. Without UPDATE_KEY anyone could send a report pretending to be a site — it can only change what the dashboard shows for that site, never what is installed anywhere.
+
+Data files stay bounded: at most `MAX_SITES` sites (default 1000; the longest-silent are dropped first), 40 version-timeline entries per plugin, 50 update results, 30 daily summaries per plugin and 20 downloads per site.
+
+## Updating this server (e.g. to 1.2.0)
+
+1. **File Manager** → `osam-update-server` → **Upload** the new `osam-update-server.zip` → right-click → **Extract** → overwrite. You should see the new `app.js`, `package.json` and `README.md` in the folder. Don't delete the `data` folder — it holds the cached releases, rollbacks, site list, reports and `config.json`.
+2. **Setup Node.js App** → the app → **Restart**. Nothing to install; no new environment variables are needed (optional: `MAX_SITES`).
+3. Check `https://updates.osamweb.com/` shows `"version":"1.2.0"`, then open `https://updates.osamweb.com/dashboard` and log in with ADMIN_TOKEN.
+4. Sites start sending reports once they run OSAM Bookings 2.17 (Turnstile with its next release); until then the dashboard shows them from their hourly update checks.
 
 ## Endpoints
 
 | Route | Who | What |
 |---|---|---|
 | `GET /v1/update` | sites | latest release for the site (plus a signed rollback when one applies) |
-| `GET /v1/download/{slug}/{version}.zip` | sites | zip, via a link valid for 3 days and tied to the site |
+| `GET /v1/download/{slug}/{version}.zip` | sites | zip, via a link valid for 3 days and tied to the site (counted per release) |
+| `POST /v1/report` | sites (+ UPDATE_KEY if set) | daily status report: `{schema, slug, site, version, key?, report: {…}}` |
+| `POST /v1/event` | sites (+ UPDATE_KEY if set) | update result: `{slug, site, version, key?, event: {type: "update", from, to, ok, error, forced, time}}` |
 | `POST /v1/webhook/github` | GitHub | triggers a sync (HMAC-checked) |
-| `GET /v1/sync`, `GET /v1/status` | admin token | sync now / releases, rollbacks, sites |
+| `GET /v1/sync`, `GET /v1/status` | admin token | sync now / releases, rollbacks, sites (unchanged) |
 | `POST /v1/rollbacks` | admin token + signature | stores a signed rollback (sent by the Rollback workflow) |
+| `GET /v1/dashboard/overview`, `/v1/dashboard/sites`, `/v1/dashboard/sites/{host}`, `/v1/dashboard/releases`, `/v1/dashboard/config` | admin token or dashboard session | the dashboard's data as JSON |
+| `GET /dashboard…`, `POST /dashboard/login`, `/dashboard/logout`, `/dashboard/sync` | ADMIN_TOKEN login | the dashboard |
+
+New files in `data/`: `reports.json` (latest report per site and plugin), `history.json` (version timeline, update results, daily summaries, downloads per site), `downloads.json` (download counts per release).
 
 Tests (for developers): `node --test test/*.test.js`.

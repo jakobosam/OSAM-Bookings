@@ -44,6 +44,8 @@ class OSB_Bookings {
 			'refunded' => __( 'Refunded', 'osam-bookings' ),
 			'free'     => __( 'Free', 'osam-bookings' ),
 			'card_held' => __( 'Card on file', 'osam-bookings' ),
+			// Only ever set by Deposits & part payments (OSB_Deposits): a deposit is in, the balance isn't.
+			'part_paid' => __( 'Deposit paid', 'osam-bookings' ),
 		);
 	}
 
@@ -204,7 +206,9 @@ class OSB_Bookings {
 		$wpdb->suppress_errors( true );
 		$got = $wpdb->get_var( "SELECT GET_LOCK('osb_booking_write', 10)" );
 		$wpdb->suppress_errors( false );
-		return null === $got || '1' === (string) $got;
+		// MySQL answers 1 (got it), 0 (timed out) or NULL (error). Only a timeout stops the booking;
+		// databases without GET_LOCK (e.g. SQLite) answer something else and carry on unlocked.
+		return '0' !== (string) $got;
 	}
 
 	/**
@@ -639,12 +643,17 @@ class OSB_Bookings {
 			return false;
 		}
 		$payment_id = OSB_DB::add_payment( $booking->id, $gateway, $txn, $amount, $booking->currency, 'completed', $raw );
+		// A deposit or part of the balance (Deposits & part payments) leaves the booking part paid.
+		$part = OSB_Deposits::after_payment( $booking, $amount );
 		OSB_DB::update(
 			'bookings',
 			$booking->id,
-			array(
-				'payment_status' => 'paid',
-				'updated_at'     => current_time( 'mysql' ),
+			array_merge(
+				array(
+					'payment_status' => 'paid',
+					'updated_at'     => current_time( 'mysql' ),
+				),
+				(array) $part
 			)
 		);
 		$invoice = null;

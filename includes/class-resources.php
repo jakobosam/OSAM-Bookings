@@ -1509,7 +1509,7 @@ class OSB_Resources {
 				);
 			}
 		}
-		return array(
+		$json = array(
 			'id'          => (int) $r->id,
 			'name'        => $r->name,
 			'description' => wp_kses_post( wpautop( (string) $r->description ) ),
@@ -1538,6 +1538,10 @@ class OSB_Resources {
 			'price_label' => self::price_label( $r ),
 			'methods'     => $methods,
 		);
+		if ( OSB_Deposits::enabled() ) {
+			$json['deposit'] = OSB_Deposits::rule_json( $r );
+		}
+		return $json;
 	}
 
 	/**

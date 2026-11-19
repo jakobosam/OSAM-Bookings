@@ -353,8 +353,8 @@ class OSB_Calendar {
 		if ( in_array( $b->status, array( 'pending', 'pending_payment' ), true ) ) {
 			$classes[] = 'osb-ev-pending';
 		}
-		if ( 'unpaid' === $b->payment_status && (float) $b->amount > 0 && ! in_array( $b->status, array( 'cancelled' ), true ) ) {
-			$classes[] = 'osb-ev-unpaid';
+		if ( ( 'unpaid' === $b->payment_status && (float) $b->amount > 0 && ! in_array( $b->status, array( 'cancelled' ), true ) ) || OSB_Deposits::balance_owed( $b ) ) {
+			$classes[] = 'osb-ev-unpaid'; // Money still owed (including a balance after a deposit).
 		}
 		return array(
 			'id'              => 'b-' . (int) $b->id,
@@ -652,6 +652,10 @@ class OSB_Calendar {
 			array( __( 'Method', 'osam-bookings' ), esc_html( $d['payment_method'] ) ),
 			array( __( 'Status', 'osam-bookings' ), esc_html( $d['payment_status'] ) ),
 		);
+		if ( ! empty( $d['deposit_paid'] ) ) {
+			$pay[] = array( __( 'Deposit paid', 'osam-bookings' ), esc_html( $d['deposit_paid'] ) );
+			$pay[] = array( ! empty( $d['balance_note'] ) ? __( 'Rest of the bill', 'osam-bookings' ) : __( 'Balance to pay', 'osam-bookings' ), esc_html( ! empty( $d['balance_note'] ) ? __( 'Paid on the night', 'osam-bookings' ) : (string) ( $d['balance_due'] ?? '' ) ) );
+		}
 		if ( ! empty( $d['addons'] ) ) {
 			$pay[] = array( __( 'Add-ons', 'osam-bookings' ), esc_html( implode( ', ', wp_list_pluck( $d['addons'], 'name' ) ) ) );
 		}
@@ -699,6 +703,8 @@ class OSB_Calendar {
 		}
 		if ( in_array( $b->payment_status, array( 'unpaid' ), true ) && (float) $b->amount > 0 && ! in_array( $b->status, array( 'cancelled', 'payment_failed' ), true ) ) {
 			$acts['paid'] = array( __( 'Mark paid', 'osam-bookings' ), 'ghost', 'dashicons-money-alt' );
+		} elseif ( OSB_Deposits::balance_owed( $b ) || ( OSB_Deposits::bill_on_the_night( $b ) && ! in_array( $b->status, array( 'cancelled', 'payment_failed' ), true ) ) ) {
+			$acts['paid'] = array( OSB_Deposits::bill_on_the_night( $b ) ? __( 'Mark bill paid', 'osam-bookings' ) : __( 'Mark balance paid', 'osam-bookings' ), 'ghost', 'dashicons-money-alt' );
 		}
 		if ( in_array( $b->status, array( 'confirmed', 'pending', 'pending_payment' ), true ) ) {
 			$acts['cancelled'] = array( __( 'Cancel booking', 'osam-bookings' ), 'danger', 'dashicons-no' );
@@ -737,6 +743,8 @@ class OSB_Calendar {
 		foreach ( $rows as $b ) {
 			if ( 'paid' === $b->payment_status ) {
 				$rev += (float) $b->amount;
+			} elseif ( 'part_paid' === $b->payment_status ) {
+				$rev += OSB_Deposits::paid( $b ); // Deposits & part payments: what has come in so far.
 			}
 		}
 		?>
@@ -841,7 +849,7 @@ class OSB_Calendar {
 			if ( in_array( $b->status, OSB_Bookings::hidden_statuses(), true ) ) {
 				continue;
 			}
-			$pay = 'paid' === $b->payment_status ? __( 'Paid', 'osam-bookings' ) : ( 'unpaid' === $b->payment_status && (float) $b->amount > 0 ? __( 'Unpaid', 'osam-bookings' ) : '' );
+			$pay = 'paid' === $b->payment_status ? __( 'Paid', 'osam-bookings' ) : ( 'unpaid' === $b->payment_status && (float) $b->amount > 0 ? __( 'Unpaid', 'osam-bookings' ) : ( 'part_paid' === $b->payment_status ? __( 'Deposit paid', 'osam-bookings' ) : '' ) );
 			printf(
 				'<li class="%s"><button type="button" class="osb-cpanel__person" data-cal-open="%d"><strong>%s</strong><small>%s</small></button>%s</li>',
 				esc_attr( 'cancelled' === $b->status ? 'is-cancelled' : '' ),
@@ -873,7 +881,11 @@ class OSB_Calendar {
 			return new WP_REST_Response( array( 'message' => __( 'Booking not found.', 'osam-bookings' ) ), 404 );
 		}
 		$msg = '';
-		if ( 'paid' === $act ) {
+		if ( 'paid' === $act && 'part_paid' === $b->payment_status ) {
+			// Deposit already in: record the balance (or a table's bill) as paid in person.
+			$done = OSB_Deposits::record_payment( $b, 0, $notify );
+			$msg  = is_wp_error( $done ) ? $done->get_error_message() : __( 'Marked as paid.', 'osam-bookings' );
+		} elseif ( 'paid' === $act ) {
 			if ( 'paid' !== $b->payment_status && (float) $b->amount > 0 ) {
 				OSB_DB::update( 'bookings', $b->id, array( 'payment_status' => 'paid', 'updated_at' => current_time( 'mysql' ) ) );
 				$pid = OSB_DB::add_payment( $b->id, 'manual', 'admin-' . get_current_user_id() . '-' . time(), $b->amount, $b->currency, 'completed', array( 'by' => get_current_user_id() ) );

@@ -473,7 +473,7 @@ class OSB_Admin_Invoices {
 			return;
 		}
 		$docs = OSB_Invoices::for_booking( $b );
-		$paid = 'paid' === $b->payment_status && (float) $b->amount > 0;
+		$paid = in_array( $b->payment_status, array( 'paid', 'part_paid' ), true ) && (float) $b->amount > 0;
 		if ( ! $docs && ! $paid ) {
 			return;
 		}

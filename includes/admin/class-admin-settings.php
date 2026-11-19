@@ -273,6 +273,7 @@ class OSB_Admin_Settings {
 			'invoices'      => array( admin_url( 'admin.php?page=osb-settings&tab=invoices' ), __( 'Set up invoices', 'osam-bookings' ) ),
 			'restaurant'    => array( admin_url( 'admin.php?page=osb-floor' ), __( 'Set up tables & floor plan', 'osam-bookings' ) ),
 			'resources'     => array( admin_url( 'admin.php?page=osb-resources' ), __( 'Add resources', 'osam-bookings' ) ),
+			'deposits'      => array( admin_url( 'admin.php?page=osb-settings&tab=payments#osb-deposits' ), __( 'Set the deposit', 'osam-bookings' ) ),
 		);
 		?>
 		<div class="osb-card">
@@ -641,6 +642,7 @@ define( 'OSB_LICENCE_SERVICE', '<?php echo esc_html( $s['licence_service'] ? $s[
 			<?php
 		}
 		echo '<p class="osb-help">' . esc_html__( 'Each service, event and course can limit which of these are offered.', 'osam-bookings' ) . '</p>';
+		OSB_Deposits::settings_card( $s ); // Only while Deposits & part payments is switched on.
 	}
 
 	/**
@@ -837,6 +839,7 @@ define( 'OSB_LICENCE_SERVICE', '<?php echo esc_html( $s['licence_service'] ? $s[
 			<div class="osb-tags">
 			<?php
 			$tags = array( '{customer_name}', '{customer_first_name}', '{customer_email}', '{customer_phone}', '{item_name}', '{staff_name}', '{staff_line}', '{location}', '{location_line}', '{date}', '{time}', '{end_time}', '{duration}', '{seats}', '{attendees}', '{amount}', '{discount}', '{payment_method}', '{payment_status}', '{status}', '{booking_id}', '{manage_url}', '{admin_url}', '{booking_url}', '{review_url}', '{meeting_link}', '{site_name}', '{site_url}', '{field:your_field_key}', '{intake_name}', '{session_count}', '{session_number}', '{session_date}', '{session_time}', '{session_end_time}', '{session_location}', '{session_note}', '{previous_when}', '{waitlist_expires}', '{covers}', '{tables}', '{noshow_fee}', '{resources}', '{booked_out}', '{hire}', '{access_code}', '{access_note}', '{invoice_number}', '{invoice_total}', '{invoice_date}', '{invoice_link}', '{pay_link}', '{amount_due}', '{credit_note_number}', '{credit_note_total}', '{credit_note_reason}' );
+			$tags = array_merge( $tags, OSB_Deposits::tags() );
 			foreach ( $tags as $tag ) {
 				echo '<button type="button" class="osb-tag osb-copy" data-copy="' . esc_attr( $tag ) . '">' . esc_html( $tag ) . '</button>';
 			}
@@ -1253,6 +1256,7 @@ define( 'OSB_LICENCE_SERVICE', '<?php echo esc_html( $s['licence_service'] ? $s[
 						$v = array_merge( $v, $gateway->save_settings( $post ) );
 					}
 				}
+				$v = array_merge( $v, OSB_Deposits::settings_values( $post ) );
 				break;
 
 			case 'emails':

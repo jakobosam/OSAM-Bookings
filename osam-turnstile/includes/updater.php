@@ -16,6 +16,12 @@
  *   define( 'OSAM_TS_UPDATES', false );      no updates from OSAM at all
  *   define( 'OSB_UPDATE_KEY', '…' );         if the update server has an update key (shared with OSAM Bookings)
  *   define( 'OSB_UPDATE_SERVER', 'https://…' ); another update server (testing; shared with OSAM Bookings)
+ *   define( 'OSB_REPORT', false );           no daily status report to the update server (shared with OSAM Bookings)
+ *
+ * Status report: once a day a small JSON report (plugin, WordPress and PHP versions, multisite, locale,
+ * auto-updates on/off, last forced install result, withdrawn versions) goes to {server}/v1/report, and
+ * the result of each update of this plugin (from → to, ok/failed, error) to {server}/v1/event. Nothing
+ * about visitors or form submissions is ever sent.
  *
  * @package OSAM_Turnstile
  */
@@ -61,7 +67,9 @@ final class OSAM_TS_Updater {
 		add_filter( 'auto_update_plugin', array( __CLASS__, 'auto' ), 20, 2 );
 		add_filter( 'upgrader_pre_download', array( __CLASS__, 'pre_download' ), 5, 4 );
 		add_action( 'upgrader_process_complete', array( __CLASS__, 'after_install' ), 10, 2 );
+		add_filter( 'upgrader_pre_install', array( __CLASS__, 'before_install' ), 10, 2 );
 		add_action( self::CRON, array( __CLASS__, 'enforce' ) );
+		add_action( self::CRON, array( __CLASS__, 'maybe_report' ), 20 );
 		add_action( 'init', array( __CLASS__, 'schedule' ) );
 	}
 
@@ -552,6 +560,7 @@ final class OSAM_TS_Updater {
 		error_log( 'OSAM Turnstile: ' . ( $status['ok'] ? 'installed' : 'failed to install' ) . " $want over $from" . ( $status['msg'] ? ': ' . $status['msg'] : '' ) ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions
 		if ( ! $status['ok'] ) {
 			set_transient( 'osam_ts_forced_wait', 1, 30 * MINUTE_IN_SECONDS ); // Try again in half an hour.
+			self::event( $from, $want, false, $status['msg'], true );
 		}
 		delete_transient( 'osam_ts_forced_lock' );
 	}
@@ -574,6 +583,158 @@ final class OSAM_TS_Updater {
 			|| ( isset( $upgrader->result['destination_name'] ) && self::SLUG === $upgrader->result['destination_name'] );
 		if ( $ours ) {
 			wp_schedule_single_event( time() + 2 * MINUTE_IN_SECONDS, self::CRON );
+			if ( '' !== self::$before && 'update' === ( isset( $extra['action'] ) ? $extra['action'] : 'update' ) ) {
+				$now = self::installed();
+				if ( $now !== self::$before ) {
+					self::event( self::$before, $now, true );
+				} else {
+					$res = isset( $upgrader->skin->result ) ? $upgrader->skin->result : null;
+					self::event( self::$before, '', false, is_wp_error( $res ) ? $res->get_error_message() : 'the version on disk did not change' );
+				}
+				self::$before = '';
+			}
 		}
+	}
+
+	/* ---------------------------------------------------------------------
+	 * Status report (switch off with define( 'OSB_REPORT', false ); in wp-config.php)
+	 * ------------------------------------------------------------------ */
+
+	/** @var string Version installed before the running upgrade. */
+	private static $before = '';
+
+	/**
+	 * Note the installed version before WordPress replaces this plugin.
+	 *
+	 * @param mixed $return     Filter value (passed through).
+	 * @param array $hook_extra Details.
+	 * @return mixed
+	 */
+	public static function before_install( $return, $hook_extra = array() ) {
+		if ( isset( $hook_extra['plugin'] ) && self::$file === $hook_extra['plugin'] ) {
+			self::$before = self::installed();
+		}
+		return $return;
+	}
+
+	/** Is the report switched on? */
+	private static function report_on() {
+		return ! ( defined( 'OSB_REPORT' ) && ! OSB_REPORT ) && ! ( defined( 'OSAM_TS_UPDATES' ) && ! OSAM_TS_UPDATES );
+	}
+
+	/**
+	 * POST JSON to the update server.
+	 *
+	 * @param string $path    Path.
+	 * @param array  $payload Fields.
+	 * @return int HTTP code (0 when unreachable).
+	 */
+	private static function post( $path, array $payload ) {
+		$body = array_merge(
+			array(
+				'schema'  => 1,
+				'slug'    => self::SLUG,
+				'site'    => home_url( '/' ),
+				'version' => self::installed(),
+			),
+			$payload
+		);
+		if ( defined( 'OSB_UPDATE_KEY' ) && OSB_UPDATE_KEY ) {
+			$body['key'] = (string) OSB_UPDATE_KEY;
+		}
+		$res = wp_remote_post(
+			self::server() . $path,
+			array(
+				'timeout' => 8,
+				'headers' => array( 'Content-Type' => 'application/json' ),
+				'body'    => (string) wp_json_encode( $body ),
+			)
+		);
+		return is_wp_error( $res ) ? 0 : (int) wp_remote_retrieve_response_code( $res );
+	}
+
+	/** Daily report (runs from the hourly job). */
+	public static function maybe_report() {
+		if ( ! self::report_on() ) {
+			return;
+		}
+		$last = get_option( 'osam_ts_report_sent', array() );
+		$last = is_array( $last ) ? $last : array();
+		if ( time() - (int) ( isset( $last['time'] ) ? $last['time'] : 0 ) < ( ! empty( $last['ok'] ) ? DAY_IN_SECONDS : 3 * HOUR_IN_SECONDS ) ) {
+			return;
+		}
+		$forced = get_option( self::STATUS );
+		$info   = get_site_transient( self::CACHE );
+		$auto   = (array) get_site_option( 'auto_update_plugins', array() );
+		$report = array(
+			'generated' => time(),
+			'env'       => array(
+				'wp'             => get_bloginfo( 'version' ),
+				'php'            => PHP_VERSION,
+				'multisite'      => is_multisite(),
+				'locale'         => substr( (string) get_locale(), 0, 20 ),
+				'title'          => substr( wp_strip_all_tags( (string) get_bloginfo( 'name' ) ), 0, 120 ),
+				'home'           => esc_url_raw( home_url( '/' ) ),
+				'https'          => 0 === strpos( home_url( '/' ), 'https://' ),
+				'login_check'    => defined( 'OSAM_TS_LOGIN' ) && OSAM_TS_LOGIN,
+				'elementor_pro'  => defined( 'ELEMENTOR_PRO_VERSION' ),
+				'divi'           => function_exists( 'et_setup_theme' ) || defined( 'ET_BUILDER_VERSION' ),
+			),
+			'updates'   => array(
+				'auto'        => ! defined( 'OSAM_TS_AUTO_UPDATE' ) || OSAM_TS_AUTO_UPDATE || in_array( self::$file, $auto, true ),
+				'blocked'     => array_slice( self::blocked(), -20 ),
+				'last_forced' => is_array( $forced ) ? array(
+					'time' => (int) $forced['time'],
+					'from' => (string) $forced['from'],
+					'to'   => (string) $forced['to'],
+					'ok'   => ! empty( $forced['ok'] ),
+					'msg'  => substr( (string) $forced['msg'], 0, 300 ),
+				) : null,
+				'last_check'  => is_array( $info ) ? array(
+					'time'   => (int) ( isset( $info['checked'] ) ? $info['checked'] : 0 ),
+					'latest' => isset( $info['version'] ) ? (string) $info['version'] : '',
+					'error'  => isset( $info['error'] ) ? substr( (string) $info['error'], 0, 300 ) : '',
+				) : null,
+			),
+		);
+		$code = self::post( '/v1/report', array( 'report' => $report ) );
+		update_option(
+			'osam_ts_report_sent',
+			array(
+				'time' => time(),
+				'ok'   => $code >= 200 && $code < 300,
+				'code' => $code,
+			),
+			false
+		);
+	}
+
+	/**
+	 * Tell the update server how an update went.
+	 *
+	 * @param string $from   Version before.
+	 * @param string $to     Version wanted / installed.
+	 * @param bool   $ok     Installed.
+	 * @param string $error  Reason.
+	 * @param bool   $forced Required by OSAM.
+	 */
+	private static function event( $from, $to, $ok, $error = '', $forced = false ) {
+		if ( ! self::report_on() ) {
+			return;
+		}
+		self::post(
+			'/v1/event',
+			array(
+				'event' => array(
+					'type'   => 'update',
+					'time'   => time(),
+					'from'   => (string) $from,
+					'to'     => (string) $to,
+					'ok'     => (bool) $ok,
+					'error'  => $ok ? '' : substr( wp_strip_all_tags( (string) $error ), 0, 300 ),
+					'forced' => (bool) $forced,
+				),
+			)
+		);
 	}
 }

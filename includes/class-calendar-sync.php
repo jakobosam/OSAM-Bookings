@@ -567,6 +567,7 @@ class OSB_Calendar_Sync {
 	private static function fail( $conn, $error, $fatal = false ) {
 		$msg  = is_wp_error( $error ) ? $error->get_error_message() : (string) $error;
 		$data = array( 'last_error' => substr( $msg, 0, 500 ) );
+		OSB_Log::add( $fatal ? 'error' : 'warning', 'calendar', $msg, array( 'connection' => (int) $conn->id, 'provider' => (string) ( $conn->provider ?? '' ) ) );
 		if ( $fatal ) {
 			$data['status'] = 'error';
 		}

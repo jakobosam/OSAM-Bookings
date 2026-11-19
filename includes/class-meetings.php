@@ -465,6 +465,7 @@ class OSB_Meetings {
 	 * @param WP_Error $err     Error.
 	 */
 	private static function log_error( $booking, $err ) {
+		OSB_Log::error( 'zoom', $err->get_error_message(), array( 'booking' => (int) ( $booking->id ?? 0 ) ) );
 		$log = get_option( 'osb_meeting_errors', array() );
 		$log = is_array( $log ) ? $log : array();
 		if ( $log && (int) $log[0]['booking'] === (int) $booking->id && $log[0]['message'] === $err->get_error_message() ) {

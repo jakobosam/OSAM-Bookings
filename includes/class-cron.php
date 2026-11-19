@@ -57,15 +57,92 @@ class OSB_Cron {
 	}
 
 	/**
+	 * Option holding when the 5-minute job last ran: [ last, prev, cli ].
+	 */
+	const BEAT = 'osb_cron_beat';
+
+	/**
+	 * How the scheduled jobs are doing.
+	 *
+	 * @return array [ last_run (unix, 0 = never), gap (seconds between the last two runs),
+	 *                 real_cron (DISABLE_WP_CRON is on, so a server cron job is expected),
+	 *                 late (no run for over 15 minutes), state ok|late|never|visitor ]
+	 */
+	public static function health() {
+		$b    = get_option( self::BEAT, array() );
+		$b    = is_array( $b ) ? $b : array();
+		$last = (int) ( $b['last'] ?? 0 );
+		$real = defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON;
+		$late = ! $last || time() - $last > 15 * MINUTE_IN_SECONDS;
+		$cli  = ! empty( $b['cli'] ) && (int) $b['cli'] > time() - DAY_IN_SECONDS; // A server cron job ran it in the last day.
+		if ( ! $last ) {
+			$state = 'never';
+		} elseif ( $late ) {
+			$state = 'late';
+		} elseif ( $real ) {
+			$state = 'ok';
+		} else {
+			$state = $cli ? 'server' : 'visitor'; // server = cron job works, wp-config line still to add.
+		}
+		return array(
+			'last_run'  => $last,
+			'gap'       => $last && ! empty( $b['prev'] ) ? $last - (int) $b['prev'] : 0,
+			'real_cron' => $real,
+			'server'    => $cli,
+			'late'      => $late,
+			'state'     => $state,
+		);
+	}
+
+	/**
+	 * Was this run started by a server cron job rather than a visitor?
+	 *
+	 * @return bool
+	 */
+	private static function from_server() {
+		if ( 'cli' === PHP_SAPI ) {
+			return true;
+		}
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only check of how wp-cron.php was called.
+		return isset( $_GET['doing_wp_cron'] ) && '' === (string) $_GET['doing_wp_cron'];
+	}
+
+	/**
+	 * Note that the jobs ran (for health()).
+	 */
+	private static function beat() {
+		$b = get_option( self::BEAT, array() );
+		$b = is_array( $b ) ? $b : array();
+		update_option(
+			self::BEAT,
+			array(
+				'last' => time(),
+				'prev' => (int) ( $b['last'] ?? 0 ),
+				// A server cron job, not a visitor: run from the command line (cPanel "php wp-cron.php"), or
+				// wp-cron.php fetched with a bare ?doing_wp_cron (the wget command). WordPress's own visitor
+				// trigger always puts a timestamp after doing_wp_cron=.
+				'cli'  => self::from_server() ? time() : (int) ( $b['cli'] ?? 0 ),
+			),
+			false
+		);
+		if ( ! empty( $b['last'] ) && time() - (int) $b['last'] > HOUR_IN_SECONDS ) {
+			/* translators: %s time */
+			OSB_Log::warn( 'cron', sprintf( __( 'The 5-minute booking jobs didn’t run for %s, so reminders, payment time-outs and calendar sync were late. Set up a server cron job (see the dashboard).', 'osam-bookings' ), human_time_diff( (int) $b['last'] ) ) );
+		}
+	}
+
+	/**
 	 * Run all jobs.
 	 */
 	public static function run() {
+		self::beat();
 		if ( OSB_Licence::full_off() ) {
 			return; // Subscription suspended: reminders, emails and syncing pause until it's paid.
 		}
 		self::expire_unpaid();
 		self::send_reminders();
 		OSB_Courses::send_session_reminders();
+		OSB_Deposits::send_balance_reminders();
 		self::complete_past();
 		self::send_followups();
 		if ( ! OSB_Licence::bookings_off() ) {

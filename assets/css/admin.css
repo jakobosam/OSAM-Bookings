@@ -497,6 +497,17 @@ body[class*="page_osb-"] #wpfooter { display: none; }
 .osb-admin .osb-grouptitle__desc { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; color: var(--o-faint); margin-left: 6px; }
 .osb-admin .osb-emails-hidden { margin: 14px 0 0; }
 .osb-admin .osb-emails-hidden .dashicons { vertical-align: -5px; color: var(--o-faint); }
+.osb-admin .osb-cronline { display: flex; align-items: center; gap: 6px; margin: 6px 0 4px; max-width: 100%; }
+.osb-admin .osb-cronline code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 8px 10px; border-radius: 8px; background: #f2f4f7; font-size: 12px; }
+.osb-admin .osb-cronsteps ol li { margin-bottom: 10px; }
+.osb-admin .osb-cronsteps small.osb-help { display: block; }
+.osb-admin .osb-wizard__cron { margin-top: 18px; }
+.osb-admin .osb-card__head--row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.osb-admin .osb-problems { margin: 0; padding: 0; list-style: none; }
+.osb-admin .osb-problems li { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--o-border); }
+.osb-admin .osb-problems li:first-child { border-top: 0; }
+.osb-admin .osb-problems small { color: var(--o-muted); white-space: nowrap; }
+@media (max-width: 640px) { .osb-admin .osb-problems li { grid-template-columns: 1fr; gap: 4px; } }
 .osb-admin .osb-email-tpl { padding: 0; margin-bottom: 8px; }
 .osb-admin .osb-email-tpl summary { display: flex; align-items: center; gap: 12px; padding: 14px 18px; cursor: pointer; list-style: none; }
 .osb-admin .osb-email-tpl summary::-webkit-details-marker { display: none; }
@@ -1183,3 +1194,9 @@ body[class*="page_osb-"] #wpfooter { display: none; }
 .osb-cpanel .osb-btn--danger { color: #b42318 !important; }
 .osb-cpanel__notify { font-size: 13px; }
 .osb-cpanel__open { justify-self: start; }
+
+/* Deposits & part payments: the Deposit card on a booking and the deposit fields on items. */
+.osb-deposit-card .osb-deposit-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e4e7ec; }
+.osb-deposit-card .osb-deposit-form .osb-formfoot { margin-top: 10px; }
+.osb-deposit-fields { margin-top: 16px; }
+.osb-deposit-fields h3 { margin: 0 0 8px; font-size: 14px; }

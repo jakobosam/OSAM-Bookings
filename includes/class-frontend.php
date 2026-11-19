@@ -132,7 +132,7 @@ class OSB_Frontend {
 			$fields[]     = $f;
 		}
 
-		return array(
+		$config = array(
 			'rest'        => esc_url_raw( rest_url( OSB_Rest::NS ) ),
 			'labels'      => OSB_Settings::get( 'labels' ),
 			'fields'      => $fields,
@@ -276,6 +276,12 @@ class OSB_Frontend {
 				'previewOnly'   => __( 'Preview only — bookings are not saved from the settings screen.', 'osam-bookings' ),
 			),
 		);
+		/**
+		 * Booking form settings and wording (window.OSB_BOOKING).
+		 *
+		 * @param array $config Config.
+		 */
+		return (array) apply_filters( 'osb_booking_js_config', $config );
 	}
 
 	/**
@@ -422,6 +428,12 @@ class OSB_Frontend {
 		$rows[] = array( __( 'Name', 'osam-bookings' ), (string) $booking->customer_name );
 		if ( $form && abs( $due - (float) $booking->amount ) > 0.009 ) {
 			$rows[] = array( __( 'Booking total', 'osam-bookings' ), $d['amount'] );
+		}
+		if ( ! empty( $d['deposit_paid'] ) ) {
+			$rows[] = array( __( 'Deposit paid', 'osam-bookings' ), $d['deposit_paid'] );
+			if ( $form ) {
+				$title = __( 'Pay the rest of your booking', 'osam-bookings' );
+			}
 		}
 
 		ob_start();

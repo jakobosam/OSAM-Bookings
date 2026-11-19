@@ -46,6 +46,7 @@ class OSB_Admin_Dashboard {
 			array( (bool) osb()->payments->enabled(), __( 'Turn on a payment method', 'osam-bookings' ), __( 'Pay on site, Stripe, PayPal or WooCommerce.', 'osam-bookings' ), admin_url( 'admin.php?page=osb-settings&tab=payments' ), __( 'Payments', 'osam-bookings' ) ),
 			array( $from_ok, __( 'Send emails from your domain', 'osam-bookings' ), __( 'A From address on this site’s domain keeps emails out of spam.', 'osam-bookings' ), admin_url( 'admin.php?page=osb-settings&tab=emails' ), __( 'Email settings', 'osam-bookings' ) ),
 			array( $has_sc, __( 'Put the booking form on a page', 'osam-bookings' ), __( 'Use a shortcode or the Elementor widget, and set it as the booking page.', 'osam-bookings' ), admin_url( 'admin.php?page=osb-shortcodes' ), __( 'Get shortcodes', 'osam-bookings' ) ),
+			array( OSB_Admin_Cron::done(), __( 'Set up the server cron job', 'osam-bookings' ), __( 'So reminders and payment time-outs run every 5 minutes, even when nobody visits the site.', 'osam-bookings' ), admin_url( 'admin.php?page=osb-dashboard#osb-cron' ), __( 'Show me how', 'osam-bookings' ) ),
 		);
 	}
 
@@ -152,6 +153,43 @@ class OSB_Admin_Dashboard {
 						</li>
 					<?php endforeach; ?>
 				</ol>
+			</div>
+		<?php endif; ?>
+
+		<?php if ( current_user_can( 'manage_options' ) && ! OSB_Admin_Cron::done() ) : ?>
+			<div class="osb-card" id="osb-cron">
+				<?php OSB_Admin::card_head( __( 'Keep reminders on time', 'osam-bookings' ), __( 'WordPress only runs scheduled jobs when someone visits the site. A cron job in your hosting runs them every 5 minutes instead.', 'osam-bookings' ) ); ?>
+				<?php OSB_Admin_Cron::panel( true ); ?>
+			</div>
+		<?php endif; ?>
+
+		<?php
+		$problems = current_user_can( 'manage_options' ) ? OSB_Log::recent( 8 ) : array();
+		$problems = array_filter(
+			$problems,
+			static function ( $e ) {
+				return (int) $e['last'] > time() - 7 * DAY_IN_SECONDS;
+			}
+		);
+		if ( $problems ) :
+			$areas = OSB_Log::areas();
+			?>
+			<div class="osb-card" id="osb-problems">
+				<div class="osb-card__head osb-card__head--row">
+					<div><h2><?php esc_html_e( 'Recent problems', 'osam-bookings' ); ?></h2><p><?php esc_html_e( 'Things that went wrong in the last 7 days — payments, calendar sync, emails, Zoom, updates and scheduled jobs. Most fix themselves; repeats are worth a look.', 'osam-bookings' ); ?></p></div>
+					<a class="osb-btn osb-btn--ghost osb-btn--sm" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=osb_log_clear' ), 'osb_log_clear' ) ); ?>"><?php esc_html_e( 'Clear', 'osam-bookings' ); ?></a>
+				</div>
+				<ul class="osb-problems">
+					<?php foreach ( $problems as $e ) : ?>
+						<li class="is-<?php echo esc_attr( $e['level'] ); ?>">
+							<span class="osb-pill osb-pill--<?php echo 'warning' === $e['level'] ? 'pending' : 'cancelled'; ?>"><?php echo esc_html( $areas[ $e['area'] ] ?? $e['area'] ); ?></span>
+							<span class="osb-problems__msg"><?php echo esc_html( $e['msg'] ); ?>
+								<?php if ( ! empty( $e['ctx']['booking'] ) ) : ?> <a href="<?php echo esc_url( admin_url( 'admin.php?page=osb-bookings&action=view&id=' . (int) $e['ctx']['booking'] ) ); ?>">#<?php echo (int) $e['ctx']['booking']; ?></a><?php endif; ?>
+							</span>
+							<small><?php /* translators: %s time ago */ echo esc_html( sprintf( __( '%s ago', 'osam-bookings' ), human_time_diff( (int) $e['last'] ) ) ); ?><?php echo (int) $e['count'] > 1 ? ' · ' . esc_html( sprintf( /* translators: %d times */ _n( '%d time', '%d times', (int) $e['count'], 'osam-bookings' ), (int) $e['count'] ) ) : ''; ?></small>
+						</li>
+					<?php endforeach; ?>
+				</ul>
 			</div>
 		<?php endif; ?>
 

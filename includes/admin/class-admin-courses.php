@@ -270,6 +270,7 @@ class OSB_Admin_Courses {
 						<div class="osb-field osb-field--third"><label for="osb_price"><?php esc_html_e( 'Course fee per place', 'osam-bookings' ); ?></label><div class="osb-affix osb-affix--pre"><span><?php echo esc_html( $sym ); ?></span><input type="number" id="osb_price" name="price" min="0" step="0.01" value="<?php echo esc_attr( $c->price ); ?>"></div></div>
 					</div>
 					<div class="osb-field"><label><?php esc_html_e( 'Payment methods offered', 'osam-bookings' ); ?></label><?php OSB_Admin::methods_checkboxes( $c->payment_methods ); ?></div>
+					<?php OSB_Deposits::item_fields( $c ); ?>
 					<label class="osb-switch"><input type="hidden" name="status" value="hidden"><input type="checkbox" name="status" value="active" <?php checked( 'active', $c->status ); ?>><span></span><?php esc_html_e( 'On sale — customers can enrol online', 'osam-bookings' ); ?></label>
 				</div>
 			</div>
@@ -388,7 +389,7 @@ class OSB_Admin_Courses {
 			'payment_methods' => implode( ',', array_map( 'sanitize_key', (array) ( isset( $post['payment_methods'] ) ? $post['payment_methods'] : array() ) ) ),
 			'status'          => isset( $post['status'] ) && 'active' === $post['status'] ? 'active' : 'hidden',
 		);
-		$data = array_merge( $data, OSB_Meetings::from_post( $post, 'course' ) );
+		$data = array_merge( $data, OSB_Meetings::from_post( $post, 'course' ), OSB_Deposits::from_post( $post ) );
 		if ( '' === $data['name'] ) {
 			OSB_Admin::flash_error( __( 'Please give the course a name.', 'osam-bookings' ) );
 			wp_safe_redirect( wp_get_referer() );
@@ -801,7 +802,7 @@ class OSB_Admin_Courses {
 									<small class="osb-register__guests"><?php /* translators: %s names */ echo esc_html( sprintf( __( 'With %s', 'osam-bookings' ), implode( ', ', $osb_others ) ) ); ?></small>
 								<?php endif; ?>
 								<?php echo 'confirmed' !== $b->status && 'completed' !== $b->status ? OSB_Admin::status_pill( $b->status ) : ''; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
-								<?php if ( 'paid' !== $b->payment_status && 'free' !== $b->payment_status ) : ?><span class="osb-pill osb-pill--warn"><?php esc_html_e( 'Unpaid', 'osam-bookings' ); ?></span><?php endif; ?>
+								<?php if ( 'part_paid' === $b->payment_status ) : ?><span class="osb-pill osb-pill--warn" title="<?php echo esc_attr( trim( OSB_Deposits::list_suffix( $b ), ' ·' ) ); ?>"><?php esc_html_e( 'Deposit paid', 'osam-bookings' ); ?></span><?php elseif ( 'paid' !== $b->payment_status && 'free' !== $b->payment_status ) : ?><span class="osb-pill osb-pill--warn"><?php esc_html_e( 'Unpaid', 'osam-bookings' ); ?></span><?php endif; ?>
 							</td>
 							<?php
 							foreach ( $sessions as $s ) :

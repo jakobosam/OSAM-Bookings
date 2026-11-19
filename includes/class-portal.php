@@ -415,6 +415,11 @@ class OSB_Portal {
 		if ( ! empty( $d['pass_label'] ) ) {
 			$rows[] = array( 'paidWith', $d['pass_label'] );
 		}
+		if ( ! empty( $d['deposit_paid'] ) ) {
+			// Deposits & part payments: "Deposit paid: £30 · £70 to pay".
+			$rest   = ! empty( $d['balance_due'] ) ? sprintf( /* translators: %s amount */ __( '%s to pay', 'osam-bookings' ), $d['balance_due'] ) : ( ! empty( $d['balance_note'] ) ? $d['balance_note'] : '' );
+			$rows[] = array( __( 'Deposit paid', 'osam-bookings' ), $d['deposit_paid'] . ( '' !== $rest ? ' · ' . $rest : '' ) );
+		}
 		return array(
 			'id'          => (int) $b->id,
 			'token'       => $b->token,

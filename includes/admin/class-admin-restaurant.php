@@ -803,6 +803,9 @@ class OSB_Admin_Restaurant {
 						<div class="osb-field osb-field--third"><label for="osb_dep"><?php esc_html_e( 'Deposit', 'osam-bookings' ); ?></label><div class="osb-inline"><input type="number" id="osb_dep" name="rest_deposit_amount" min="0" step="0.01" class="small-text" value="<?php echo esc_attr( $s['rest_deposit_amount'] ); ?>"><?php OSB_Admin::input( 'rest_deposit_type', $s['rest_deposit_type'], 'select', array( 'per_cover' => __( 'per guest', 'osam-bookings' ), 'per_booking' => __( 'per booking', 'osam-bookings' ) ) ); ?></div></div>
 						<div class="osb-field osb-field--third"><label for="osb_fee"><?php esc_html_e( 'No-show fee per guest', 'osam-bookings' ); ?></label><input type="number" id="osb_fee" name="rest_noshow_fee" min="0" step="0.01" value="<?php echo esc_attr( $s['rest_noshow_fee'] ); ?>"><p class="osb-help"><?php esc_html_e( 'Card hold only.', 'osam-bookings' ); ?></p></div>
 					</div>
+					<?php if ( OSB_Deposits::enabled() ) : ?>
+						<p class="osb-help"><?php esc_html_e( 'With Deposits & part payments on, a paid table deposit shows as “Deposit paid” until you mark the rest of the bill as paid on the night (from the booking or the calendar).', 'osam-bookings' ); ?></p>
+					<?php endif; ?>
 					<?php if ( $online_gws ) : ?>
 						<div class="osb-field"><label><?php esc_html_e( 'Deposit payment methods', 'osam-bookings' ); ?></label>
 							<div class="osb-chips-check">

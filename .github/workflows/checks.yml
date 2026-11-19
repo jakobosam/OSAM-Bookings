@@ -1,0 +1,107 @@
+# Automatic checks: PHP syntax on the oldest and newest supported PHP, the end-to-end tests
+# (tests/e2e-*.php in WordPress Playground) on both, and the update server's tests.
+#
+# Runs on pull requests and pushes to main / release-* branches, and is called by release.yml and
+# release-turnstile.yml before anything is built or signed: if a check fails, no release is made.
+# Run it by hand: Actions -> Checks -> Run workflow.
+#
+# Locally:  node tests/run.mjs 7.4   |   node tests/run.mjs 8.3   |   cd update-server && node --test
+
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'release-*']
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Runner image: pinned to ubuntu-24.04 instead of ubuntu-latest. GitHub is moving ubuntu-latest to
+# Ubuntu 26.04 from 19 October 2026, and during that roll-out the same workflow can land on either
+# image. A release pipeline should not change underneath us mid-release, so we move to 26.04 on purpose
+# (one line per job, after a green test run) rather than by surprise. Revisit before 24.04 is retired.
+
+jobs:
+  php-lint:
+    name: PHP ${{ matrix.php }} syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.3']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: none
+
+      - name: php -l every PHP file (except update-server/ and node_modules)
+        run: |
+          php -r 'echo "PHP ", PHP_VERSION, PHP_EOL;'
+          failed=0
+          checked=0
+          while IFS= read -r -d '' f; do
+            checked=$((checked + 1))
+            if ! out=$(php -d display_errors=1 -d error_reporting=-1 -l "$f" 2>&1); then
+              failed=$((failed + 1))
+              echo "$out"
+              echo "::error file=${f#./},title=PHP ${{ matrix.php }} syntax error::$(printf '%s' "$out" | tr '\n' ' ')"
+            elif grep -q 'Deprecated:' <<<"$out"; then
+              # Compile-time deprecations don't fail php -l; show them (the e2e tests fail on runtime ones).
+              echo "::warning file=${f#./},title=PHP ${{ matrix.php }} deprecation::$(grep -m1 'Deprecated:' <<<"$out")"
+            fi
+          done < <(find . -type f -name '*.php' \
+                     -not -path './.git/*' -not -path './update-server/*' -not -path '*/node_modules/*' -print0)
+          echo "Checked $checked PHP files on PHP ${{ matrix.php }}: $failed with errors."
+          if [ "$checked" -eq 0 ]; then echo "::error::No PHP files found"; exit 1; fi
+          if [ "$failed" -ne 0 ]; then exit 1; fi
+
+  e2e:
+    name: E2E tests on PHP ${{ matrix.php }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.3']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      # Every tests/e2e-*.php in WordPress Playground (PHP ${{ matrix.php }}, latest WordPress, SQLite).
+      # The Playground CLI version is pinned inside tests/run.mjs.
+      - name: Run tests/run.mjs
+        run: node tests/run.mjs ${{ matrix.php }}
+
+  update-server:
+    name: Update server tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: node --test
+        working-directory: update-server
+        run: node --test

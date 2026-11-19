@@ -411,6 +411,13 @@ class OSB_Admin_Wizard {
 				<a href="<?php echo esc_url( admin_url( 'admin.php?page=osb-dashboard' ) ); ?>"><span class="dashicons dashicons-dashboard"></span><strong><?php esc_html_e( 'Go to the dashboard', 'osam-bookings' ); ?></strong><small><?php esc_html_e( 'Bookings, calendar & more', 'osam-bookings' ); ?></small></a>
 			</div>
 		</div>
+		<?php if ( ! OSB_Admin_Cron::done() ) : ?>
+			<div class="osb-card osb-wizard__card osb-wizard__cron">
+				<h2><?php esc_html_e( 'One last thing: keep reminders on time', 'osam-bookings' ); ?></h2>
+				<p class="osb-lead"><?php esc_html_e( 'WordPress only runs scheduled jobs when someone visits the site, so on quiet days reminders and payment time-outs can be late. A cron job in your hosting runs them every 5 minutes instead.', 'osam-bookings' ); ?></p>
+				<?php OSB_Admin_Cron::panel( true ); ?>
+			</div>
+		<?php endif; ?>
 		<?php
 	}
 

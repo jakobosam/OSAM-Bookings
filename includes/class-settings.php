@@ -127,6 +127,13 @@ class OSB_Settings {
 			'woo_title'               => __( 'Checkout', 'osam-bookings' ),
 			'free_status'             => 'confirmed',
 
+			// Deposits & part payments (Settings → Features; off by default). Items use these unless they set their own.
+			'enable_deposits'         => 0,
+			'deposit_type'            => 'none', // none|per_booking|per_person|percent.
+			'deposit_amount'          => 20,
+			'deposit_full'            => 1,      // Customers may choose to pay everything up front instead.
+			'deposit_reminder_days'   => 3,      // "Balance due" email this many days before (0 = never).
+
 			// Invoices.
 			'enable_invoices'         => 1,
 			'inv_pay_button'          => 1,
@@ -423,6 +430,11 @@ class OSB_Settings {
 				'subject' => 'Your invoice {invoice_number} from {site_name}',
 				'body'    => "<h1>Thanks for your payment, {customer_first_name}</h1>\n<p>Your invoice <strong>{invoice_number}</strong> for <strong>{invoice_total}</strong> is attached for your records.</p>\n{details_card}\n{pay_button}\n{invoice_button}\n$foot",
 			),
+			'customer_balance_due' => array(
+				'enabled' => 1,
+				'subject' => 'Balance due for {item_name} on {date}',
+				'body'    => "<h1>See you soon, {customer_first_name}</h1>\n<p>Thanks for paying a deposit of <strong>{deposit_paid}</strong> for your booking. The rest — <strong>{balance_due}</strong> — is still to pay.</p>\n{pay_button}\n<p>You can pay online with the button above, or when you arrive.</p>\n{details_card}\n{manage_button}\n$foot",
+			),
 			'customer_credit_note' => array(
 				'enabled' => 1,
 				'subject' => 'Credit note {credit_note_number} from {site_name}',
@@ -467,7 +479,7 @@ class OSB_Settings {
 	 * @return array
 	 */
 	public static function email_labels() {
-		return array(
+		$labels = array(
 			'customer_pending'   => __( 'Customer — booking received (awaiting approval)', 'osam-bookings' ),
 			'customer_confirmed' => __( 'Customer — booking confirmed', 'osam-bookings' ),
 			'customer_cancelled' => __( 'Customer — booking cancelled', 'osam-bookings' ),
@@ -490,6 +502,11 @@ class OSB_Settings {
 			'staff_new'          => __( 'Staff member — new booking', 'osam-bookings' ),
 			'staff_cancelled'    => __( 'Staff member — booking cancelled', 'osam-bookings' ),
 		);
+		if ( self::feature( 'deposits' ) ) {
+			// Only listed (and so only editable, testable or replaceable) while deposits are switched on.
+			$labels['customer_balance_due'] = __( 'Customer — balance due (deposit paid)', 'osam-bookings' );
+		}
+		return $labels;
 	}
 
 	/**
@@ -515,6 +532,7 @@ class OSB_Settings {
 			'waitlist'   => array( __( 'Waitlist', 'osam-bookings' ), '', self::feature( 'waitlist' ), array( 'customer_waitlist_offer' ), __( 'Needs Waitlist and Events or Courses switched on.', 'osam-bookings' ) ),
 			'resources'  => array( __( 'Resources', 'osam-bookings' ), '', self::feature( 'resources' ), array( 'customer_access_code' ), '' ),
 			'bundles'    => array( __( 'Bundles', 'osam-bookings' ), '', self::feature( 'bundles' ), array( 'customer_bundle' ), '' ),
+			'deposits'   => array( __( 'Deposits & part payments', 'osam-bookings' ), __( 'A reminder before the visit when only a deposit has been paid.', 'osam-bookings' ), self::feature( 'deposits' ), array( 'customer_balance_due' ), __( 'Switch on Deposits & part payments in Settings → Features.', 'osam-bookings' ) ),
 		);
 		$out = array();
 		foreach ( $sections as $id => $s ) {
@@ -688,6 +706,7 @@ class OSB_Settings {
 			'repeat'        => array( __( 'Repeat bookings', 'osam-bookings' ), __( 'Customers book the same time every week, fortnight or month in one go — appointments, resources and tables. Staff can repeat any booking, and events can be created as a series.', 'osam-bookings' ), 'dashicons-backup', 'enable_repeat' ),
 			'addons'        => array( __( 'Add-ons', 'osam-bookings' ), __( 'Extras customers can add when they book — equipment, refreshments, extra time — priced per booking, per person, per hour or per day.', 'osam-bookings' ), 'dashicons-plus-alt', 'enable_addons' ),
 			'bundles'       => array( __( 'Bundles', 'osam-bookings' ), __( 'Sell packs of sessions or credits in advance (e.g. 10 for the price of 8). Customers get a code to pay for bookings with.', 'osam-bookings' ), 'dashicons-tickets', 'enable_bundles' ),
+			'deposits'      => array( __( 'Deposits & part payments', 'osam-bookings' ), __( 'Take a deposit online when people book and collect the rest later — online with a “Pay now” link or in person. Bookings show as “Deposit paid” until the balance is in.', 'osam-bookings' ), 'dashicons-money-alt', 'enable_deposits' ),
 			'coupons'       => array( __( 'Discount codes & vouchers', 'osam-bookings' ), __( 'Percentage or fixed-amount codes, and gift vouchers with a balance, entered at checkout.', 'osam-bookings' ), 'dashicons-tag', 'enable_coupons' ),
 			'reschedule'    => array( __( 'Customer rescheduling', 'osam-bookings' ), __( 'Customers can move their own appointment from the link in their email.', 'osam-bookings' ), 'dashicons-calendar', 'allow_customer_reschedule' ),
 			'followup'      => array( __( 'After-visit emails', 'osam-bookings' ), __( 'A thank-you a few hours after the appointment, with an optional review link.', 'osam-bookings' ), 'dashicons-star-filled', 'followup' ),

@@ -269,6 +269,7 @@ class OSB_Licence {
 	 * @param string $error Message.
 	 */
 	private static function failed( $error ) {
+		OSB_Log::warn( 'subscription', $error );
 		$s            = self::state();
 		$s['checked'] = time();
 		$s['error']   = $error;

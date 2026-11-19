@@ -64,9 +64,9 @@ class OSB_Reports {
 			"SELECT
 				SUM(CASE WHEN status IN ($in) THEN 1 ELSE 0 END) AS bookings,
 				SUM(CASE WHEN status IN ($in) THEN seats ELSE 0 END) AS places,
-				SUM(CASE WHEN payment_status = 'paid' THEN amount ELSE 0 END) AS revenue,
-				SUM(CASE WHEN payment_status = 'unpaid' AND status IN ('pending','confirmed','completed') THEN amount ELSE 0 END) AS outstanding,
-				SUM(CASE WHEN payment_status = 'refunded' THEN amount ELSE 0 END) AS refunded,
+				SUM(" . OSB_Deposits::sql_received() . ") AS revenue,
+				SUM(CASE WHEN payment_status = 'unpaid' AND status IN ('pending','confirmed','completed') THEN amount " . ( OSB_Deposits::ready() ? "WHEN payment_status = 'part_paid' AND status IN ('pending','confirmed','completed') AND amount > amount_paid THEN amount - amount_paid " : '' ) . "ELSE 0 END) AS outstanding,
+				SUM(CASE WHEN payment_status = 'refunded' THEN " . ( OSB_Deposits::ready() ? 'CASE WHEN amount_paid > 0 THEN amount_paid ELSE amount END' : 'amount' ) . " ELSE 0 END) AS refunded,
 				SUM(CASE WHEN status IN ($in) THEN discount ELSE 0 END) AS discounts,
 				SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
 				SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) AS no_shows,
@@ -120,7 +120,7 @@ class OSB_Reports {
 		$b    = OSB_Install::table( 'bookings' );
 		$in   = "'" . implode( "','", self::counted() ) . "'";
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
-		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT DATE_FORMAT($col, %s) k, SUM(CASE WHEN status IN ($in) THEN 1 ELSE 0 END) n, SUM(CASE WHEN payment_status = 'paid' THEN amount ELSE 0 END) r FROM $b WHERE " . self::range_where( $from, $to, $basis ) . " AND status <> 'pending_payment' GROUP BY k", $fmt[ $unit ] ), OBJECT_K );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT DATE_FORMAT($col, %s) k, SUM(CASE WHEN status IN ($in) THEN 1 ELSE 0 END) n, SUM(" . OSB_Deposits::sql_received() . ") r FROM $b WHERE " . self::range_where( $from, $to, $basis ) . " AND status <> 'pending_payment' GROUP BY k", $fmt[ $unit ] ), OBJECT_K );
 
 		$buckets = array();
 		$cursor  = strtotime( $from );
@@ -167,7 +167,7 @@ class OSB_Reports {
 		$in    = "'" . implode( "','", self::counted() ) . "'";
 		$names = OSB_Admin_Dashboard::name_maps();
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
-		$rows = $wpdb->get_results( "SELECT type, CASE type WHEN 'event' THEN event_id WHEN 'course' THEN course_id ELSE service_id END AS item_id, SUM(CASE WHEN status IN ($in) THEN 1 ELSE 0 END) bookings, SUM(CASE WHEN status IN ($in) THEN seats ELSE 0 END) places, SUM(CASE WHEN payment_status = 'paid' THEN amount ELSE 0 END) revenue, SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) cancelled, SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) no_shows FROM $b WHERE " . self::range_where( $from, $to, $basis ) . " AND status <> 'pending_payment' GROUP BY type, item_id" );
+		$rows = $wpdb->get_results( "SELECT type, CASE type WHEN 'event' THEN event_id WHEN 'course' THEN course_id ELSE service_id END AS item_id, SUM(CASE WHEN status IN ($in) THEN 1 ELSE 0 END) bookings, SUM(CASE WHEN status IN ($in) THEN seats ELSE 0 END) places, SUM(" . OSB_Deposits::sql_received() . ") revenue, SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) cancelled, SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) no_shows FROM $b WHERE " . self::range_where( $from, $to, $basis ) . " AND status <> 'pending_payment' GROUP BY type, item_id" );
 		$out  = array();
 		foreach ( $rows as $r ) {
 			$map  = 'event' === $r->type ? 'events' : ( 'course' === $r->type ? 'courses' : 'services' );
@@ -218,7 +218,7 @@ class OSB_Reports {
 		$b    = OSB_Install::table( 'bookings' );
 		$in   = "'" . implode( "','", self::counted() ) . "'";
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
-		$rows = $wpdb->get_results( "SELECT staff_id, SUM(CASE WHEN status IN ($in) THEN 1 ELSE 0 END) bookings, SUM(CASE WHEN payment_status = 'paid' THEN amount ELSE 0 END) revenue FROM $b WHERE " . self::range_where( $from, $to, $basis ) . " AND status <> 'pending_payment' AND staff_id > 0 GROUP BY staff_id", OBJECT_K );
+		$rows = $wpdb->get_results( "SELECT staff_id, SUM(CASE WHEN status IN ($in) THEN 1 ELSE 0 END) bookings, SUM(" . OSB_Deposits::sql_received() . ") revenue FROM $b WHERE " . self::range_where( $from, $to, $basis ) . " AND status <> 'pending_payment' AND staff_id > 0 GROUP BY staff_id", OBJECT_K );
 		$occ  = self::occupancy( $from, $to );
 		$out  = array();
 		foreach ( OSB_DB::staff() as $st ) {
@@ -368,7 +368,7 @@ class OSB_Reports {
 		$b  = OSB_Install::table( 'bookings' );
 		$in = "'" . implode( "','", self::counted() ) . "'";
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
-		return $wpdb->get_results( $wpdb->prepare( "SELECT LOWER(customer_email) email, MAX(customer_name) name, COUNT(*) bookings, SUM(CASE WHEN payment_status = 'paid' THEN amount ELSE 0 END) spent FROM $b WHERE customer_email <> '' AND customer_email NOT LIKE %s AND status IN ($in) AND " . self::range_where( $from, $to, $basis ) . ' GROUP BY LOWER(customer_email) ORDER BY spent DESC, bookings DESC LIMIT %d', '%@' . OSB_Customers::ERASED_DOMAIN, $limit ) );
+		return $wpdb->get_results( $wpdb->prepare( "SELECT LOWER(customer_email) email, MAX(customer_name) name, COUNT(*) bookings, SUM(" . OSB_Deposits::sql_received() . ") spent FROM $b WHERE customer_email <> '' AND customer_email NOT LIKE %s AND status IN ($in) AND " . self::range_where( $from, $to, $basis ) . ' GROUP BY LOWER(customer_email) ORDER BY spent DESC, bookings DESC LIMIT %d', '%@' . OSB_Customers::ERASED_DOMAIN, $limit ) );
 	}
 
 	/**
@@ -384,7 +384,7 @@ class OSB_Reports {
 		$b  = OSB_Install::table( 'bookings' );
 		$in = "'" . implode( "','", self::counted() ) . "'";
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
-		return $wpdb->get_results( "SELECT UPPER(coupon_code) code, COUNT(*) uses, SUM(discount) discount, SUM(CASE WHEN payment_status = 'paid' THEN amount ELSE 0 END) revenue FROM $b WHERE coupon_code <> '' AND status IN ($in) AND " . self::range_where( $from, $to, $basis ) . ' GROUP BY UPPER(coupon_code) ORDER BY uses DESC, discount DESC LIMIT 20' );
+		return $wpdb->get_results( "SELECT UPPER(coupon_code) code, COUNT(*) uses, SUM(discount) discount, SUM(" . OSB_Deposits::sql_received() . ") revenue FROM $b WHERE coupon_code <> '' AND status IN ($in) AND " . self::range_where( $from, $to, $basis ) . ' GROUP BY UPPER(coupon_code) ORDER BY uses DESC, discount DESC LIMIT 20' );
 	}
 
 	/**

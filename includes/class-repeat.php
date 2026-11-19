@@ -200,6 +200,10 @@ class OSB_Repeat {
 				'amount' => is_wp_error( $try ) ? 0 : (float) $try->amount,
 				'first'  => 0 === $i,
 			);
+			if ( OSB_Deposits::enabled() ) {
+				// What this date adds to the first payment when a deposit is taken (0 = its full amount).
+				$out[ count( $out ) - 1 ]['deposit'] = is_wp_error( $try ) || empty( $try->deposit ) ? 0.0 : (float) $try->deposit;
+			}
 		}
 		return $out;
 	}
@@ -296,16 +300,18 @@ class OSB_Repeat {
 
 	/**
 	 * What the online payment for this booking should take: the lead covers every unpaid date.
+	 * With a deposit (Deposits & part payments) each date contributes just its deposit; the balances are
+	 * paid date by date afterwards.
 	 *
 	 * @param object $booking Booking.
 	 * @return float
 	 */
 	public static function charge_total( $booking ) {
-		$total = (float) $booking->amount;
+		$total = OSB_Deposits::due_now( $booking );
 		if ( self::is_lead( $booking ) ) {
 			foreach ( self::series( $booking ) as $b ) {
 				if ( (int) $b->id !== (int) $booking->id && 'pending_payment' === $b->status ) {
-					$total += (float) $b->amount;
+					$total += OSB_Deposits::due_now( $b );
 				}
 			}
 		}
@@ -339,7 +345,8 @@ class OSB_Repeat {
 			return;
 		}
 		foreach ( self::waiting( $booking ) as $b ) {
-			OSB_DB::update( 'bookings', $b->id, array( 'payment_status' => 'paid' ) );
+			// Its deposit was in that payment (Deposits & part payments), or all of it.
+			OSB_DB::update( 'bookings', $b->id, OSB_Deposits::tracks( $b ) ? OSB_Deposits::follower_paid( $b ) : array( 'payment_status' => 'paid' ) );
 			OSB_Bookings::set_status( $b->id, (string) apply_filters( 'osb_paid_status', 'confirmed', $b ), false );
 		}
 	}
